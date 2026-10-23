@@ -1,0 +1,576 @@
+<title>A Million Flights, No Server</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap">
+<style>
+/* Measured column of prose; tables, figures and panels break out wider.
+   Palette and faces continue the search tool's own instrument identity. */
+:root {
+  --ground: #EDEFF3;
+  --surface: #FFFFFF;
+  --ink: #0F1520;
+  --body: #3B4657;
+  --muted: #6B7686;
+  --line: #DBE0E8;
+  --line-strong: #C1C8D4;
+  --accent: #C0551F;
+  --steel: #4E7C98;
+  --code: #F3F5F9;
+
+  --display: Archivo, "Helvetica Neue", Arial, sans-serif;
+  --prose: Newsreader, Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --col: 34rem;
+  --wide: 56rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0B0E14;
+    --surface: #131821;
+    --ink: #E9EDF4;
+    --body: #AEB8C6;
+    --muted: #7A8493;
+    --line: #222935;
+    --line-strong: #333C4A;
+    --accent: #F0824A;
+    --steel: #6D9AB8;
+    --code: #161C26;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0B0E14;
+  --surface: #131821;
+  --ink: #E9EDF4;
+  --body: #AEB8C6;
+  --muted: #7A8493;
+  --line: #222935;
+  --line-strong: #333C4A;
+  --accent: #F0824A;
+  --steel: #6D9AB8;
+  --code: #161C26;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--body);
+  font-family: var(--prose);
+  font-size: 1.0625rem;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 5rem;
+}
+
+/* Everything shares one left edge; prose is narrow, figures run wider. */
+.page { max-width: var(--wide); margin: 0 auto; }
+
+/* ---------- masthead ---------- */
+.masthead { padding-block: 3.5rem 2.5rem; }
+.kicker {
+  font-family: var(--display);
+  font-size: .6875rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .14em; color: var(--muted); margin: 0 0 1.1rem;
+}
+h1 {
+  font-family: var(--display);
+  font-size: clamp(2.1rem, 6.4vw, 3.5rem);
+  font-weight: 700; letter-spacing: -0.028em; line-height: 1.04;
+  color: var(--ink); margin: 0; text-wrap: balance;
+  max-width: 16ch;
+}
+.standfirst {
+  margin: 1.4rem 0 0; max-width: 40rem;
+  font-size: 1.1875rem; line-height: 1.55; color: var(--body);
+}
+.standfirst em { color: var(--ink); font-style: italic; }
+
+.figures {
+  display: grid; gap: 1px; margin-top: 2.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  background: var(--line); border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden;
+}
+.fig { background: var(--surface); padding: 1rem 1.1rem; }
+.fig b {
+  display: block; font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 1.4rem; font-weight: 600; color: var(--ink); letter-spacing: -0.02em;
+}
+.fig span {
+  display: block; margin-top: .3rem; font-family: var(--display);
+  font-size: .6875rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .09em; color: var(--muted); line-height: 1.4;
+}
+
+/* ---------- sections ---------- */
+section { margin-top: 3.25rem; }
+.eyebrow {
+  max-width: var(--col); margin: 0 auto .5rem 0;
+  display: flex; align-items: baseline; gap: .6rem;
+}
+.eyebrow .measure {
+  font-family: var(--mono); font-size: .8125rem; font-weight: 600;
+  color: var(--accent); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.eyebrow .rule { flex: 1; height: 1px; background: var(--line); }
+h2 {
+  font-family: var(--display); font-size: 1.5rem; font-weight: 600;
+  letter-spacing: -0.018em; line-height: 1.18; color: var(--ink);
+  margin: 0 auto .9rem 0; max-width: var(--col); text-wrap: balance;
+}
+p { margin: 0 auto 1.05rem 0; max-width: var(--col); }
+p strong { color: var(--ink); font-weight: 500; }
+a { color: var(--accent); text-underline-offset: 2px; }
+
+code {
+  font-family: var(--mono); font-size: .875em;
+  background: var(--code); padding: .1em .35em; border-radius: 4px;
+  color: var(--ink);
+}
+
+/* ---------- tables ---------- */
+.table-wrap { margin: 1.6rem 0 1.8rem; overflow-x: auto; }
+table {
+  width: 100%; border-collapse: collapse; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px;
+  font-family: var(--display); font-size: .875rem;
+}
+caption {
+  caption-side: top; text-align: left; color: var(--muted);
+  font-family: var(--display); font-size: .75rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .09em; padding-bottom: .6rem;
+}
+th, td { padding: .62rem .9rem; text-align: left; border-bottom: 1px solid var(--line); }
+thead th {
+  font-size: .6875rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted);
+}
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+tbody th { font-weight: 500; color: var(--ink); min-width: 0; }
+tr.hi td, tr.hi th { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+tr.hi td.num { color: var(--ink); font-weight: 600; }
+
+/* ---------- figures ---------- */
+figure {
+  margin: 1.8rem 0 2rem;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 1.4rem 1.2rem 1rem;
+}
+figure svg { display: block; width: 100%; max-width: 100%; height: auto; color: var(--ink); }
+figcaption {
+  margin-top: .9rem; font-family: var(--display); font-size: .8125rem;
+  line-height: 1.5; color: var(--muted);
+}
+
+/* ---------- pull quote / aside ---------- */
+.note {
+  max-width: var(--col); margin: 1.6rem auto 1.6rem 0;
+  border-left: 2px solid var(--accent); padding: .1rem 0 .1rem 1.1rem;
+  font-size: 1rem; color: var(--body);
+}
+.note b { color: var(--ink); font-weight: 500; font-family: var(--display); font-size: .9375rem; }
+
+/* ---------- corrections list ---------- */
+.corrections { margin: 1.6rem 0 0; display: grid; gap: 1px;
+  background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.correction { background: var(--surface); padding: 1.05rem 1.2rem; display: grid; gap: .3rem; }
+.correction .thought {
+  font-family: var(--display); font-size: .6875rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+}
+.correction .said { font-size: 1rem; color: var(--ink); font-family: var(--display); font-weight: 500; }
+.correction .was { font-size: .9375rem; }
+.correction .was b { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+
+/* ---------- footer ---------- */
+.end {
+  margin: 3.5rem 0 0; padding-top: 1.6rem;
+  border-top: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; gap: 1.2rem 2rem; align-items: baseline;
+}
+.end p { margin: 0; max-width: 30rem; font-size: .9375rem; }
+.end .links { display: flex; gap: 1.2rem; font-family: var(--display); font-size: .875rem; font-weight: 600; }
+
+@media (max-width: 600px) {
+  body { font-size: 1rem; }
+  .masthead { padding-block: 2.5rem 1.8rem; }
+  section { margin-top: 2.5rem; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="page">
+<header class="masthead">
+  <p class="kicker">Slipstream &middot; engine notes</p>
+  <h1>A Million Flights, No Server</h1>
+  <p class="standfirst">
+    There is no free flight-pricing API left to call. So I built the search to run
+    where the data already is: a columnar binary file in the browser, filtered,
+    sorted and charted <em>without a single network request</em> while you use it.
+    These are the measurements that shaped it, including the ones that proved me wrong.
+  </p>
+
+  <div class="figures">
+    <div class="fig"><b>8.63ms</b><span>Full frame, one million rows</span></div>
+    <div class="fig"><b>20.0</b><span>Bytes per offer on disk</span></div>
+    <div class="fig"><b>0</b><span>Requests while searching</span></div>
+    <div class="fig"><b>1,200</b><span>Real markets, real fares</span></div>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow"><span class="measure">17 July 2026</span><span class="rule"></span></div>
+  <h2>The constraint came first</h2>
+  <p>
+    Amadeus decommissioned its self-service portal on 17 July 2026, disabled existing
+    keys and archived its SDKs the same day. What remains for live fares is enterprise
+    contracts and paid scrapers. The free tier that every side project used is gone.
+  </p>
+  <p>
+    That settles the architecture before any code gets written. If fare data can only be
+    acquired in bulk and offline, then querying a provider per keystroke was never the
+    design. The search has to happen where the data already sits, which means shipping
+    the data to the client and doing the work there.
+  </p>
+  <p>
+    Everything below follows from that one inversion. The interesting problems stop being
+    about network latency and start being about how fast you can scan a few hundred
+    megabytes of RAM inside a 16ms frame.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">20.0 bytes/row</span><span class="rule"></span></div>
+  <h2>A format you can read without parsing</h2>
+  <p>
+    Offers are stored in a slab: one binary buffer, each field its own typed array laid
+    end to end, with a small JSON blob at the tail describing the layout. Strings live in
+    dictionaries and rows reference them by integer.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 880 200" role="img" aria-label="Slab layout: a 32-byte header, then each field stored as its own contiguous column, then a JSON metadata blob at the tail. A price filter reads only the price column.">
+      <defs>
+        <marker id="tick" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+          <polygon points="0,0 6,3 0,6" fill="currentColor"></polygon>
+        </marker>
+      </defs>
+
+      <rect x="8" y="42" width="54" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+      <text x="35" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">hdr</text>
+
+      <rect x="70" y="42" width="96" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+      <text x="118" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">depMin</text>
+
+      <rect x="174" y="42" width="96" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+      <text x="222" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">arrMin</text>
+
+      <rect x="278" y="42" width="78" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+      <text x="317" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">durMin</text>
+
+      <rect x="364" y="42" width="110" height="46" rx="3" fill="#C0551F" fill-opacity="0.14" stroke="#C0551F" stroke-width="2"></rect>
+      <text x="419" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">priceCents</text>
+
+      <rect x="482" y="42" width="58" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+      <text x="511" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">stops</text>
+
+      <rect x="548" y="42" width="66" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+      <text x="581" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">carrier</text>
+
+      <rect x="622" y="42" width="110" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+      <text x="677" y="70" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">origin &middot; dest</text>
+
+      <rect x="740" y="42" width="132" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"></rect>
+      <text x="806" y="65" text-anchor="middle" font-size="12" font-family="monospace" fill="currentColor">metadata</text>
+      <text x="806" y="80" text-anchor="middle" font-size="10" font-family="monospace" fill="currentColor" opacity="0.65">+ dictionaries</text>
+
+      <line x1="8" y1="28" x2="872" y2="28" stroke="currentColor" stroke-width="1" opacity="0.35"></line>
+      <text x="8" y="20" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">one ArrayBuffer</text>
+      <text x="872" y="20" font-size="11" font-family="monospace" text-anchor="end" fill="currentColor" opacity="0.7">19.08MB at 1M rows</text>
+
+      <line x1="419" y1="104" x2="419" y2="134" stroke="#C0551F" stroke-width="2" marker-end="url(#tick)"></line>
+      <text x="419" y="154" text-anchor="middle" font-size="12.5" font-family="monospace" fill="#C0551F">a price filter reads 4MB</text>
+      <text x="419" y="172" text-anchor="middle" font-size="12.5" font-family="monospace" fill="currentColor" opacity="0.7">and never touches the other 15</text>
+    </svg>
+    <figcaption>
+      Columns sit contiguously, so a filter streams exactly the field it tests. The same
+      million offers as row-oriented JSON would be about 7.2 times larger and would have
+      to be parsed into objects before the first comparison.
+    </figcaption>
+  </figure>
+
+  <p>
+    Decoding is the part that pays off. The metadata names each column's byte offset, so
+    the reader constructs typed-array views over the existing buffer and stops.
+    No per-row object is allocated anywhere. Decoding a million offers takes
+    <strong>0.21ms</strong>, which is not a parsing cost so much as the absence of one.
+  </p>
+
+  <div class="note">
+    <b>The size surprise.</b> I assumed compression would shrink this a lot. Brotli at
+    maximum quality gets <b>1.9&times;</b>, not the 3&times; I expected: packed binary columns are
+    high-entropy and there is little left to find. A million offers is 9.86MB on the wire.
+    That number, not the raw size, is what decides you shard the file per origin airport
+    rather than shipping one global slab.
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">16.4ms &rarr; 8.1ms</span><span class="rule"></span></div>
+  <h2>Filters that stop re-reading the same rows</h2>
+  <p>
+    The first design kept a bitset per predicate and intersected them. Each filter scanned
+    all million rows, so four filters scanned four million. That measured 16.4ms, comfortably
+    over a frame, and it would have killed the whole premise.
+  </p>
+  <p>
+    The fix is a selection vector. The first predicate scans every row and writes the
+    survivors into a <code>Uint32Array</code>. Every predicate after it only re-checks what
+    is left. With a filter that keeps a quarter of the rows, the second pass is a quarter
+    of the work and the third is a sixteenth.
+  </p>
+  <p>
+    The inner loops write unconditionally and advance the cursor by zero or one, so there
+    is no branch for the CPU to mispredict:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>One million rows, Apple Silicon, Node 24</caption>
+      <thead>
+        <tr><th>Operation</th><th class="num">p50</th><th class="num">p95</th></tr>
+      </thead>
+      <tbody>
+        <tr><th>One filter, slider drag</th><td class="num">2.35ms</td><td class="num">2.51ms</td></tr>
+        <tr><th>Four filters, typical query</th><td class="num">6.91ms</td><td class="num">7.03ms</td></tr>
+        <tr><th>Price histogram, 48 bins</th><td class="num">0.60ms</td><td class="num">0.61ms</td></tr>
+        <tr><th>Date grid, 60 day buckets</th><td class="num">0.64ms</td><td class="num">0.68ms</td></tr>
+        <tr><th>Window of 40 rows</th><td class="num">0.52ms</td><td class="num">0.54ms</td></tr>
+        <tr class="hi"><th>Full frame, all of the above</th><td class="num">8.63ms</td><td class="num">8.93ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Sorting is precomputed rather than repeated. A stable four-pass radix argsort builds one
+    permutation per sort key at load, 11 to 18ms each, and switching between cheapest,
+    fastest and earliest afterwards is just picking a different permutation.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">0.02ms</span><span class="rule"></span></div>
+  <h2>Multi-city, without building the itineraries</h2>
+  <p>
+    A three-leg trip across 100,000 offers per leg has <strong>10<sup>15</sup></strong>
+    combinations. Materialising them is not a performance problem to optimise, it is a
+    thing you must never do.
+  </p>
+  <p>
+    You do not have to. The cheapest itinerary is necessarily the cheapest offer on every
+    leg. And every itinerary after that differs from one already found by a single step up
+    on a single leg. So the candidates worth examining are always a thin frontier around
+    what you have already emitted, and a heap over that frontier yields trips in price
+    order.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 300" role="img" aria-label="A grid of two legs' offers sorted by price. The three cheapest trips have been emitted along the top-left diagonal; the frontier of candidates sits just beyond them, and the rest of the grid is never examined.">
+      <text x="14" y="22" font-size="12" font-family="monospace" fill="currentColor" opacity="0.7">leg 2, cheapest first &darr;</text>
+      <text x="632" y="286" font-size="12" font-family="monospace" text-anchor="end" fill="currentColor" opacity="0.7">leg 1, cheapest first &rarr;</text>
+
+      <line x1="60" y1="44" x2="60" y2="258" stroke="currentColor" stroke-width="1" opacity="0.4"></line>
+      <line x1="60" y1="258" x2="640" y2="258" stroke="currentColor" stroke-width="1" opacity="0.4"></line>
+
+      <g fill="currentColor" opacity="0.18">
+        <circle cx="260" cy="76" r="5"></circle><circle cx="340" cy="76" r="5"></circle><circle cx="420" cy="76" r="5"></circle><circle cx="500" cy="76" r="5"></circle><circle cx="580" cy="76" r="5"></circle>
+        <circle cx="340" cy="134" r="5"></circle><circle cx="420" cy="134" r="5"></circle><circle cx="500" cy="134" r="5"></circle><circle cx="580" cy="134" r="5"></circle>
+        <circle cx="260" cy="192" r="5"></circle><circle cx="340" cy="192" r="5"></circle><circle cx="420" cy="192" r="5"></circle><circle cx="500" cy="192" r="5"></circle><circle cx="580" cy="192" r="5"></circle>
+        <circle cx="180" cy="230" r="5"></circle><circle cx="260" cy="230" r="5"></circle><circle cx="340" cy="230" r="5"></circle><circle cx="420" cy="230" r="5"></circle><circle cx="500" cy="230" r="5"></circle><circle cx="580" cy="230" r="5"></circle>
+      </g>
+
+      <circle cx="100" cy="76" r="9" fill="#C0551F"></circle>
+      <circle cx="180" cy="76" r="9" fill="#C0551F"></circle>
+      <circle cx="100" cy="134" r="9" fill="#C0551F"></circle>
+      <text x="100" y="58" text-anchor="middle" font-size="11" font-family="monospace" fill="#C0551F">$393</text>
+      <text x="180" y="58" text-anchor="middle" font-size="11" font-family="monospace" fill="#C0551F">$401</text>
+      <text x="72" y="138" text-anchor="end" font-size="11" font-family="monospace" fill="#C0551F">$404</text>
+
+      <circle cx="260" cy="134" r="8" fill="none" stroke="currentColor" stroke-width="2"></circle>
+      <circle cx="180" cy="134" r="8" fill="none" stroke="currentColor" stroke-width="2"></circle>
+      <circle cx="100" cy="192" r="8" fill="none" stroke="currentColor" stroke-width="2"></circle>
+
+      <text x="300" y="176" font-size="12.5" font-family="monospace" fill="currentColor">frontier: the only candidates examined</text>
+      <text x="300" y="196" font-size="12.5" font-family="monospace" fill="currentColor" opacity="0.55">everything else is never visited</text>
+
+      <line x1="296" y1="170" x2="276" y2="140" stroke="currentColor" stroke-width="1.5" opacity="0.6"></line>
+    </svg>
+    <figcaption>
+      Filled marks are itineraries already emitted, in price order. Ringed marks are the
+      frontier the heap holds. Forty itineraries cost forty pops, whatever the size of the grid.
+    </figcaption>
+  </figure>
+
+  <p>
+    Combining forty itineraries measures <strong>0.02ms</strong>. The legs' own filtered
+    queries are the entire cost of a multi-city search, at 7.30ms for three legs.
+  </p>
+  <div class="note">
+    <b>I expected this to change the file format.</b> I said it would need a second slab
+    version with a legs table. It needed nothing. An itinerary is a composition produced at
+    query time, not a kind of row, and once that was clear the feature added one kernel and
+    no migration.
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">161ms &rarr; 2ms</span><span class="rule"></span></div>
+  <h2>What the worker actually buys</h2>
+  <p>
+    Moving the engine into a Web Worker is the obvious architecture, but at the size the
+    demo ships it is close to a wash, and saying so is more useful than claiming a win.
+    The page sends filters and a window; it receives counts, charts and a packed array of
+    only the rows about to be painted.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Dragging the price slider, one query per frame</caption>
+      <thead>
+        <tr><th>&nbsp;</th><th class="num">Main thread</th><th class="num">Worker</th></tr>
+      </thead>
+      <tbody>
+        <tr><th>500k &mdash; blocked per move</th><td class="num">4.6ms</td><td class="num">2.3ms</td></tr>
+        <tr><th>500k &mdash; latency to redraw</th><td class="num">4.6ms</td><td class="num">13.9ms</td></tr>
+        <tr class="hi"><th>3M &mdash; blocked per query</th><td class="num">161ms</td><td class="num">~2ms</td></tr>
+        <tr><th>3M &mdash; latency to redraw</th><td class="num">161ms</td><td class="num">134ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    At 500,000 rows the worker halves the blocking and costs about 9ms of added latency to
+    do it. At three million it is the difference between a page that responds and one frozen
+    for a sixth of a second on every pointer move. Notice that the two main-thread numbers
+    are identical at 3M: when the engine runs inline, the engine time <em>is</em> the block.
+    The demo keeps the worker because the architecture should hold at the sizes the design
+    exists for, and exposes <code>?engine=inline</code> so anyone can check the claim.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">1.7GB &rarr; 67KB</span><span class="rule"></span></div>
+  <h2>Fares that someone actually paid</h2>
+  <p>
+    Generated prices would have undermined everything else, so the fares come from the US
+    DOT's Airline Origin and Destination Survey: a 10% sample of tickets sold by US
+    reporting carriers, published quarterly, public domain, no account and no rate limit.
+  </p>
+  <p>
+    The harvester streams 1.7GB in two passes, one to rank 65,100 directional markets by
+    traffic and one to build fare curves for the busiest 1,200. Each market keeps its
+    observed spread as nine deciles rather than an average, because the gap between a cheap
+    seat and an expensive one on the same route is the interesting part. The result is 67KB.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Harvested markets, 2025 Q1 &mdash; nothing here is modelled</caption>
+      <thead>
+        <tr><th>Market</th><th class="num">Median</th><th class="num">p90</th><th>Carrier share</th></tr>
+      </thead>
+      <tbody>
+        <tr><th>LAX &rarr; JFK</th><td class="num">$293</td><td class="num">$1,103</td><td>DL 44% &middot; B6 35% &middot; AA 19%</td></tr>
+        <tr><th>LGA &rarr; ORD</th><td class="num">$153</td><td class="num">$308</td><td>UA 33% &middot; AA 27% &middot; YX 14%</td></tr>
+        <tr><th>LAX &rarr; HNL</th><td class="num">$198</td><td class="num">$408</td><td>HA 38% &middot; UA 22% &middot; DL 16%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    That table is the validation. JetBlue and Delta splitting the JFK transcon, a p90 up at
+    $1,103 where the premium cabins sit, Hawaiian leading Los Angeles to Honolulu, Republic
+    flying regional for the majors out of LaGuardia. None of it was put there.
+  </p>
+  <p>
+    Departure times are a different matter and the README says so plainly. DB1B records what
+    was paid and how far the passenger flew, never when they left, so schedules are generated
+    from distance with the connection rate taken from each market's own observed share.
+    Fares, routes, carriers and carrier mix are data. Clocks are not.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">five corrections</span><span class="rule"></span></div>
+  <h2>What measurement kept telling me</h2>
+  <p>
+    The useful pattern in this project was how often a confident assumption turned out to be
+    wrong in a way that only a number could reveal.
+  </p>
+
+  <div class="corrections">
+    <div class="correction">
+      <span class="thought">I assumed</span>
+      <span class="said">Scrolling to the end of 500,000 rows would hit a performance cliff.</span>
+      <span class="was">It measured <b>0.63ms</b> at offset 499,000. A tight loop over a typed array is simply fast. I did not optimise it.</span>
+    </div>
+    <div class="correction">
+      <span class="thought">I assumed</span>
+      <span class="said">The browser caps element height around 33.5 million pixels.</span>
+      <span class="was">It is <b>2<sup>24</sup></b>, measured at 16,777,214. My spacer silently shortened and the last 53% of results were unreachable. The fix maps scroll position using the DOM's real range instead of a constant I believed.</span>
+    </div>
+    <div class="correction">
+      <span class="thought">I assumed</span>
+      <span class="said">Compression would do most of the work on the wire.</span>
+      <span class="was">Brotli got <b>1.9&times;</b>. Packed columns have little redundancy left, which changes the delivery plan from one file to per-origin shards.</span>
+    </div>
+    <div class="correction">
+      <span class="thought">I assumed</span>
+      <span class="said">Multi-city would need a second version of the file format.</span>
+      <span class="was">It needed <b>none</b>. Itineraries compose at query time.</span>
+    </div>
+    <div class="correction">
+      <span class="thought">My benchmark said</span>
+      <span class="said">Multi-city search costs about 5.5ms.</span>
+      <span class="was">The live page showed <b>58ms</b>. The benchmark used broad legs; a real leg is one route on one day, around fifty rows out of half a million, and finding its cheapest offers walked the entire global price order. Sorting the narrow selection directly brought it to 2.94ms. The benchmark had been measuring the wrong shape of query and hiding a twentyfold regression.</span>
+    </div>
+  </div>
+
+  <p style="margin-top:1.8rem">
+    The last one is the one I would keep. A benchmark that measures a plausible-looking case
+    rather than the real one does not merely fail to help, it actively reassures you while
+    the product is slow.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">125 tests</span><span class="rule"></span></div>
+  <h2>Where it ended up</h2>
+  <p>
+    About 2,300 lines of dependency-free TypeScript, run through Node directly rather than
+    compiled. The demo is a single 179KB HTML file with the engine inlined, because ES module
+    imports are blocked on <code>file://</code> origins and the page should open from disk.
+    That file is generated from the same source the tests run against, and a staleness check
+    fails the build if the two drift.
+  </p>
+  <p>
+    It generates 500,000 offers over the harvested markets, filters and sorts and charts them
+    locally, builds multi-city itineraries, and encodes every view into a shareable link.
+    While you use it, it makes no network requests at all.
+  </p>
+
+  <div class="end">
+    <p>
+      Built by Param Mehta. The engine, the harvester and this write-up are in the repository;
+      the demo runs the real thing on real fares.
+    </p>
+    <div class="links">
+      <a href="https://slipstream-search.vercel.app">Live demo</a>
+      <a href="https://github.com/parammehta/slipstream">Source</a>
+    </div>
+  </div>
+</section>
+</div>

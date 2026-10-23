@@ -2,7 +2,7 @@
 
 Flight search where the interesting part is the search UX, not the booking flow.
 
-**[Live demo →](https://slipstream-search.vercel.app)**
+**[Live demo →](https://slipstream-search.vercel.app)** · **[Engineering write-up →](https://claude.ai/artifact/BGZzQAEB68wAXzzHx14Pwo)**
 
 There is no free flight-pricing API to call per keystroke. The ones that
 existed were rate-limited to hundreds of calls a day, and Amadeus — the last
@@ -269,7 +269,9 @@ discovered at runtime.
 6. ~~Worker wrapper: move the engine off the main thread~~ — done
 7. ~~Multi-city legs~~ — done
 8. ~~URL state: read the hash back on load, not just write it~~ — done
-9. Write-up: benchmarks, format comparison, profiler traces
+9. ~~Write-up: benchmarks, format comparison, the assumptions that measurement
+   overturned~~ — done ([read it](https://claude.ai/artifact/BGZzQAEB68wAXzzHx14Pwo),
+   source in `docs/writeup.html`)
 
 ## Design notes
 
