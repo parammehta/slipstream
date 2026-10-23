@@ -31,10 +31,27 @@ Apple Silicon, Node 24, `npm run bench`:
 Inside a 16ms frame, so the price slider can re-filter and redraw its own
 distribution on every pointer move rather than on commit.
 
-In the browser, driving 40 synthetic pointer moves through the real UI with a
-date selected — so the filter, the date grid, both histograms and the list all
-recompute every move: p50 5.6ms, p95 7.5ms, worst 7.9ms, **zero frames over
-budget**. Picking a date costs 5–7ms, 12.2ms worst.
+### In the browser, worker vs main thread
+
+The engine runs in a Web Worker. `?engine=inline` forces the same code onto
+the main thread, and `?rows=` changes the dataset, so the trade is measurable
+rather than asserted. Dragging the price slider one move per frame:
+
+| | main thread | worker |
+| --- | ---: | ---: |
+| 500k — blocked per move | 4.6ms | **2.3ms** |
+| 500k — latency to redraw | 4.6ms | 13.9ms |
+| 3M — blocked per query | **161ms** | **~2ms** |
+| 3M — latency to redraw | 161ms | 134ms |
+
+At 500k the main thread was already inside budget, and the worker costs ~9ms
+of extra latency to buy half the blocking — a wash. At 3M it is the difference
+between a page that responds and a page frozen for a sixth of a second on
+every single move: the engine time *is* the block when it runs inline, which
+is why those two columns are identical there.
+
+The worker is kept because the architecture should hold at the dataset sizes
+this design exists for, not just at the one the demo ships with.
 
 Load-time costs: decode 0.22ms (zero-copy), argsort 10–19ms per sort key.
 Slab size is 20.0 bytes/row — 19MB for 1M rows, ~7.2x smaller than the
@@ -64,6 +81,16 @@ date predicate, reads the grid off that selection, then refines the same
 selection by the chosen day. One extra narrow pass over rows that already
 survived everything else, instead of a second full scan.
 
+**The engine runs off the main thread.** The page owns no slab, no sort
+orders and no scratch buffers: it sends filters and a window, and receives a
+count, the grid, two histograms and a packed `Int32Array` of just the rows it
+is about to paint. One query is in flight at a time — a request arriving while
+the engine is busy collapses into a single follow-up, so a fast drag produces
+one query per turnaround instead of a queue that keeps running after the user
+lets go. Where a Worker cannot be created (a `file://` origin, mostly) the
+same bundle is evaluated on the main thread behind the same message protocol,
+so there is one implementation of the query path either way.
+
 **Windowed materialization.** The virtualized list asks for the ~40 rows it is
 about to paint. `materializeWindow` walks the sort order, skips rows outside
 the membership bitset, and stops at the limit — the full result set is never
@@ -83,6 +110,8 @@ src/core/
   query.ts       windowed materialization for the virtual list
   bitset.ts      membership bitsets
   synth.ts       seeded synthetic offers for tests and benchmarks
+src/worker/
+  engine-worker.ts     owns the slab; answers queries over postMessage
 demo/
   index.template.html  markup, styles, and the UI script
   index.html           GENERATED — template + src/core inlined
@@ -112,8 +141,15 @@ hand, `scripts/build-demo.ts` strips the types from `src/core/*.ts` (using
 Node's built-in `stripTypeScriptTypes`, so the build has no dependencies) and
 injects them into `demo/index.template.html`.
 
-Edit the engine in `src/core` and run `npm run build:demo`. `npm test` fails
-if the committed file is stale, so the two cannot drift.
+Edit the engine in `src/core` or `src/worker` and run `npm run build:demo`.
+`npm test` fails if the committed file is stale, so the two cannot drift.
+
+Query-string switches:
+
+| | |
+| --- | --- |
+| `?rows=3000000` | size of the generated dataset (1k – 20M) |
+| `?engine=inline` | force the main-thread fallback instead of the Worker |
 
 ## Running it
 
@@ -133,7 +169,7 @@ npm run check:demo     # verify it is current without writing
 3. ~~Generate the demo from `src/core` so the engine has one source of truth~~ — done
 4. ~~Flexible-date price grid: cheapest fare per day, filterable~~ — done
 5. Harvester: scheduled worker against Amadeus Self-Service, Parquet output
-6. Worker wrapper: move the engine off the main thread
+6. ~~Worker wrapper: move the engine off the main thread~~ — done
 7. Multi-city legs
 8. ~~URL state: read the hash back on load, not just write it~~ — done
 9. Write-up: benchmarks, format comparison, profiler traces

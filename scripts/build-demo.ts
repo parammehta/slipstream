@@ -27,7 +27,7 @@ const MARKER = '<!--@ENGINE@-->';
  * Dependency order, since the output is one flat classic script rather than a
  * module graph. `index.ts` is skipped — it only re-exports.
  */
-const MODULES = [
+const CORE_MODULES = [
   'format.ts',
   'encode.ts',
   'decode.ts',
@@ -39,6 +39,21 @@ const MODULES = [
   'query.ts',
   'synth.ts',
 ];
+
+/** Appended after the core modules; drives the query path over postMessage. */
+const WORKER_MODULES = ['engine-worker.ts'];
+
+/**
+ * Wires the flattened bundle up to whichever host it finds itself in: a real
+ * Worker, where `self` is the global scope, or the main-thread fallback,
+ * where the page passes in a shim with the same two methods.
+ */
+const MESSAGE_LOOP = `
+self.onmessage = (event) => {
+  const out = handleMessage(event.data);
+  self.postMessage(out.reply, out.transfer);
+};
+`.trim();
 
 /**
  * Drop import statements: once flattened, every module shares one scope.
@@ -79,23 +94,35 @@ function flatten(source: string): string {
 }
 
 function buildEngine(): string {
-  const parts = MODULES.map((file) => {
-    const source = readFileSync(join(ROOT, 'src/core', file), 'utf8');
-    return `/* ---- src/core/${file} ---- */\n${flatten(source)}`;
+  const parts = [
+    ...CORE_MODULES.map((file) => ({ dir: 'src/core', file })),
+    ...WORKER_MODULES.map((file) => ({ dir: 'src/worker', file })),
+  ].map(({ dir, file }) => {
+    const source = readFileSync(join(ROOT, dir, file), 'utf8');
+    return `/* ---- ${dir}/${file} ---- */\n${flatten(source)}`;
   });
 
+  const bundle = ['"use strict";', parts.join('\n\n'), MESSAGE_LOOP].join('\n\n');
+
+  // The bundle is carried as inert text and handed to a Blob worker, so a
+  // literal </script> anywhere inside it would close the tag early.
+  const escaped = bundle.replace(/<\/script/gi, '<\\/script');
+
   return [
-    '<script>',
-    '"use strict";',
+    '<script type="text/plain" id="engine-source">',
     '/* ------------------------------------------------------------------',
     '   GENERATED FILE — do not edit this block.',
     '',
-    '   Produced by scripts/build-demo.ts from src/core/*.ts. Edit the engine',
-    '   there and run `npm run build:demo`; `npm test` fails if this file is',
-    '   stale.',
+    '   Produced by scripts/build-demo.ts from src/core/*.ts and',
+    '   src/worker/*.ts. Edit the engine there and run `npm run build:demo`;',
+    '   `npm test` fails if this file is stale.',
+    '',
+    '   This is deliberately inert: the page turns it into a Blob and runs it',
+    '   in a Worker, falling back to evaluating it on the main thread when a',
+    '   Worker cannot be created (file:// origins, mostly).',
     '   ------------------------------------------------------------------ */',
     '',
-    parts.join('\n\n'),
+    escaped,
     '</script>',
   ].join('\n');
 }

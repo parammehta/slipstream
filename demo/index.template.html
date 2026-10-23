@@ -371,7 +371,7 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 
 <div class="boot" id="boot">
   <p class="bigmono mono" id="bootMsg">building slab…</p>
-  <p>500,000 offers · columnar encode · radix argsort</p>
+  <p id="bootSub">columnar encode · radix argsort</p>
 </div>
 
 <div class="app">
@@ -461,14 +461,15 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
       </div>
 
       <aside class="hud" aria-label="Engine performance">
-        <h3>Engine <span class="dot" id="hudDot"></span></h3>
+        <h3><span id="engineMode">starting</span> <span class="dot" id="hudDot"></span></h3>
         <dl>
-          <dt>Query</dt><dd class="mono" id="hudQuery">—</dd>
+          <dt>Engine</dt><dd class="mono" id="hudQuery">—</dd>
+          <dt>Round trip</dt><dd class="mono" id="hudRtt">—</dd>
           <dt>Paint</dt><dd class="mono" id="hudPaint">—</dd>
           <dt>Scanned</dt><dd class="mono" id="hudScan">—</dd>
         </dl>
         <canvas id="hudSpark" aria-hidden="true"></canvas>
-        <p class="note">Query + paint, last 80 interactions. 16ms budget marked.</p>
+        <p class="note">Round trip + paint, last 80 interactions. 16ms budget marked.</p>
       </aside>
     </section>
   </div>
@@ -482,86 +483,195 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
    UI — virtualized timetable, live histograms, perf HUD.
    ------------------------------------------------------------------ */
 
-const ROWS = 500000;
+/**
+ * Both are overridable from the query string so the architecture is
+ * verifiable rather than asserted: `?rows=3000000` scales the dataset,
+ * `?engine=inline` forces the main-thread fallback for comparison.
+ */
+const PARAMS = new URLSearchParams(location.search);
+const ROWS = Math.min(20000000, Math.max(1000, Number(PARAMS.get("rows")) || 500000));
+const FORCE_INLINE = PARAMS.get("engine") === "inline";
 const ROW_H = 72;
 const BINS = 64;
 const $ = (id) => document.getElementById(id);
 
 const DAYS = 60; // the synthetic shopping window
 
-let slab, orders, scratch, scratchB, selection;
+/** Fields packed per row by the engine, in order. */
+const F = { dep: 0, arr: 1, dur: 2, price: 3, stops: 4, carrier: 5, origin: 6, dest: 7 };
+const FIELD_COUNT = 8;
+/** Extra rows fetched either side of the viewport, so most scrolling is local. */
+const WINDOW_PAD = 60;
+/**
+ * Chrome clamps a rendered element to 2^24 px (16,777,214 measured), so a
+ * spacer asking for more is silently shortened — 500k rows at 72px is
+ * already past it, millions far past. Staying under the cap keeps the
+ * requested height the real height; past this point scroll position is
+ * mapped proportionally onto the row index so the end stays reachable.
+ */
+const MAX_SPACER_PX = 16000000;
+
+let host, engineMode = "worker";
+let meta = null;            // the engine's ready payload
+let AIRPORTS = [], CARRIERS = [];
 let priceDomain, durDomain;
+let NO_VALUE = 0xffffffff;  // replaced by the engine's own sentinel on ready
+
 let gridMins = new Uint32Array(DAYS);
+let gridExtent = { min: 0, max: 0, filled: 0 };
+let resultCount = 0;
+/** Cached band of packed rows: data[(i - offset) * FIELD_COUNT + field]. */
+let rowBand = { offset: 0, length: 0, data: new Int32Array(0) };
+
 const dayCells = [];
 const state = {
   origin: -1,
   day: -1,
   price: [0, 0],
   dur: [0, 0],
-  stops: new Set([0, 1, 2]),
-  carriers: new Set(CARRIERS.map((_, i) => i)),
+  stops: new Set(),
+  carriers: new Set(),
   sort: "priceCents",
 };
 
-const perf = { query: 0, paint: 0, scanned: 0, history: [] };
+const perf = { engine: 0, rtt: 0, paint: 0, scanned: 0, history: [] };
 let isDragging = false;
 let dateLabels = [];
 let dayNumbers = [];
 
+/* ---------- engine host ----------
+   One implementation of the query path, reached the same way whether it runs
+   in a Worker or, where a Worker cannot be created, on the main thread. */
+
+function makeWorkerHost(source, onMessage) {
+  const blobUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  const worker = new Worker(blobUrl);
+  // Deliberately not revoked immediately: revoking while the worker is still
+  // fetching its script races in some browsers. One URL for the page is fine.
+  worker.onmessage = (event) => onMessage(event.data);
+  return { post: (msg) => worker.postMessage(msg), worker, blobUrl };
+}
+
+function makeInlineHost(source, onMessage) {
+  const shim = {
+    onmessage: null,
+    // Async like a real worker so callers cannot accidentally depend on
+    // synchronous delivery, but a microtask rather than a timer to keep the
+    // fallback's latency honest.
+    postMessage: (msg) => queueMicrotask(() => onMessage(msg)),
+  };
+  new Function("self", source)(shim);
+  return { post: (msg) => queueMicrotask(() => shim.onmessage({ data: msg })) };
+}
+
 /* ---------- boot ---------- */
 function boot() {
   const msg = $("bootMsg");
-  // setTimeout rather than rAF: background tabs and low-power modes throttle
-  // animation frames, which would stall the boot sequence mid-way.
-  const step = (text, fn) =>
-    new Promise((resolve, reject) => {
-      msg.textContent = text;
-      setTimeout(() => {
-        try { fn(); resolve(); } catch (err) { reject(err); }
-      }, 24);
-    });
+  const source = $("engine-source").textContent;
 
-  let buf;
-  step("generating 500,000 offers…", () => { buf = encodeSlab(generateOffers(ROWS, 1)); })
-    .then(() => step("decoding slab…", () => {
-      slab = decodeSlab(buf);
-      scratch = createScratch(slab.rowCount);
-      // A second set of buffers: refineSelection reads one and writes the other.
-      scratchB = createScratch(slab.rowCount);
-    }))
-    .then(() => step("building sort orders…", () => {
-      orders = {
-        priceCents: argsortColumn(slab.columns.priceCents),
-        durationMin: argsortColumn(slab.columns.durationMin),
-        depMin: argsortColumn(slab.columns.depMin),
-      };
-    }))
-    .catch((err) => {
-      msg.textContent = "failed to build: " + err.message;
-      throw err;
-    })
-    .then(() => step("ready", () => {
-      setupDomains();
-      buildDateLabels();
-      buildControls();
-      // Domains must exist first: incoming ranges are clamped against them.
-      if (readUrlState()) syncControlsFromState();
-      $("boot").classList.add("done");
-      $("totalRows").textContent = ROWS.toLocaleString();
-      runQuery();
-    }));
+  const start = (mode) => {
+    engineMode = mode;
+    msg.textContent = mode === "worker"
+      ? "starting engine worker…"
+      : "starting engine on the main thread…";
+    host = mode === "worker"
+      ? makeWorkerHost(source, onEngineMessage)
+      : makeInlineHost(source, onEngineMessage);
+    if (mode === "worker") {
+      // A Worker can construct successfully and still fail to load its script
+      // (file:// origins do exactly this). The ping proves the bundle is
+      // running; waiting for `ready` instead would kill a healthy worker that
+      // is merely busy building a large dataset.
+      host.worker.onerror = () => failover("worker errored");
+      readyTimer = setTimeout(() => failover("worker never answered"), 3000);
+      host.post({ type: "ping" });
+    }
+    msg.textContent = "generating " + ROWS.toLocaleString() + " offers…";
+    host.post({ type: "init", rows: ROWS, seed: 1 });
+  };
+
+  let readyTimer = 0;
+  let failedOver = false;
+  function failover(reason) {
+    if (failedOver || meta) return;
+    failedOver = true;
+    clearTimeout(readyTimer);
+    if (host && host.worker) host.worker.terminate();
+    start("inline");
+  }
+
+  try {
+    if (FORCE_INLINE) throw new Error("forced inline");
+    if (typeof Worker !== "function" || typeof URL.createObjectURL !== "function") {
+      throw new Error("no worker support");
+    }
+    start("worker");
+  } catch (_) {
+    start("inline");
+  }
+
+  onPong = () => clearTimeout(readyTimer);
+  onReady = () => {
+    clearTimeout(readyTimer);
+    $("engineMode").textContent = engineMode === "worker" ? "worker" : "main thread";
+    $("boot").classList.add("done");
+    $("totalRows").textContent = ROWS.toLocaleString();
+  };
 }
 
-/** Clip the domain at p99 so one long tail doesn't flatten the histogram. */
-function percentile(column, order, p) {
-  return column[order[Math.min(order.length - 1, Math.floor(order.length * p))]];
-}
-function setupDomains() {
-  const p = slab.columns.priceCents, d = slab.columns.durationMin;
-  priceDomain = [p[orders.priceCents[0]], percentile(p, orders.priceCents, 0.99)];
-  durDomain = [d[orders.durationMin[0]], percentile(d, orders.durationMin, 0.99)];
-  state.price = priceDomain.slice();
-  state.dur = durDomain.slice();
+/** Set by boot; `onPong` confirms the bundle runs, `onReady` that it is built. */
+let onReady = () => {};
+let onPong = () => {};
+
+function onEngineMessage(msg) {
+  if (msg.type === "pong") {
+    onPong();
+    return;
+  }
+
+  if (msg.type === "ready") {
+    meta = msg;
+    AIRPORTS = msg.dicts.airports;
+    CARRIERS = msg.dicts.carriers;
+    NO_VALUE = msg.noValue;
+    priceDomain = msg.priceDomain;
+    durDomain = msg.durDomain;
+    state.price = priceDomain.slice();
+    state.dur = durDomain.slice();
+    state.stops = new Set([0, 1, 2]);
+    state.carriers = new Set(CARRIERS.map((_, i) => i));
+
+    buildDateLabels();
+    buildControls();
+    // Domains must exist first: incoming ranges are clamped against them.
+    if (readUrlState()) syncControlsFromState();
+    onReady();
+    requestQuery();
+    return;
+  }
+
+  if (msg.type === "result") {
+    if (msg.id !== inflightId) return; // a newer query already went out
+    inflightId = 0;
+    applyResult(msg);
+    flushQueued();
+    flushQueuedWindow();
+    return;
+  }
+
+  if (msg.type === "rows") {
+    if (msg.id !== inflightWindowId) return;
+    inflightWindowId = 0;
+    rowBand = { offset: msg.offset, length: msg.rowCount, data: msg.rows };
+    const t0 = performance.now();
+    paintRows();
+    perf.paint = performance.now() - t0;
+    renderHud();
+    flushQueuedWindow();
+    return;
+  }
+
+  if (msg.type === "error") console.error("engine:", msg.message);
 }
 
 function buildDateLabels() {
@@ -569,7 +679,7 @@ function buildDateLabels() {
     weekday: "short", day: "numeric", month: "short", timeZone: "UTC",
   });
   for (let day = 0; day < 70; day++) {
-    const date = new Date((slab.baseDayEpoch + day) * 86400000);
+    const date = new Date((meta.baseDayEpoch + day) * 86400000);
     dateLabels.push(fmt.format(date));
     dayNumbers.push(date.getUTCDate());
   }
@@ -590,17 +700,7 @@ const compactMoney = (cents) => {
 };
 
 /* ---------- query ---------- */
-/** Restricts to a single departure day. */
-function dayFilter(day) {
-  return {
-    kind: "range",
-    column: "depMin",
-    min: day * MINUTES_PER_DAY,
-    max: (day + 1) * MINUTES_PER_DAY - 1,
-  };
-}
-
-/** Every filter except the date — the grid is computed from these. */
+/** Every filter except the date — the engine computes the grid from these. */
 function buildFilters() {
   const f = [];
   // Most selective first: each later predicate only re-checks survivors.
@@ -620,37 +720,114 @@ function buildFilters() {
   return f;
 }
 
-function runQuery() {
-  const t0 = performance.now();
+let nextMessageId = 1;
+let inflightId = 0;
+let inflightWindowId = 0;
+let queuedQuery = false;
+let sentAt = 0;
 
-  // The date grid has to ignore the date filter, or picking a day would blank
-  // every other day. So: filter without it, read the grid off that selection,
-  // then refine the same selection by the chosen day.
-  const base = applyFilters(slab, buildFilters(), scratch);
-  gridMins = minPerBucket(
-    slab.columns.priceCents, slab.columns.depMin,
-    MINUTES_PER_DAY, DAYS, base, gridMins,
-  );
-  selection = state.day < 0 ? base : refineSelection(slab, [dayFilter(state.day)], base, scratchB);
+/** True once the list is taller than the browser will render. */
+function isScaled() {
+  return resultCount * ROW_H > MAX_SPACER_PX;
+}
 
-  priceHist.update(selection);
-  durHist.update(selection);
-  const t1 = performance.now();
-
-  $("resultCount").textContent = selection.count.toLocaleString();
-  $("results").dataset.empty = selection.count === 0 ? "true" : "false";
-  $("spacer").style.height = selection.count * ROW_H + "px";
+function visibleRange() {
   const list = $("list");
-  if (list.scrollTop > selection.count * ROW_H) list.scrollTop = 0;
+  const viewport = list.clientHeight || 600;
+  const perScreen = Math.ceil(viewport / ROW_H);
+  const visible = perScreen + 6;
 
+  if (!isScaled()) {
+    return { first: Math.max(0, Math.floor(list.scrollTop / ROW_H) - 3), visible, scaled: false };
+  }
+
+  // Map the real scroll range onto the full row range. Measured from the DOM
+  // rather than computed from MAX_SPACER_PX: the browser is the authority on
+  // how tall the spacer actually ended up.
+  const maxScroll = Math.max(1, list.scrollHeight - list.clientHeight);
+  const t = Math.min(1, Math.max(0, list.scrollTop / maxScroll));
+  const first = Math.round(t * Math.max(0, resultCount - perScreen));
+  return { first, visible, scaled: true };
+}
+
+/**
+ * Only one query is ever in flight. A request arriving while the engine is
+ * busy is collapsed into a single follow-up, so a fast drag produces one
+ * query per engine turnaround instead of a queue that runs long after the
+ * user let go.
+ */
+function requestQuery() {
+  if (inflightId) { queuedQuery = true; return; }
+  const { first, visible } = visibleRange();
+  inflightId = nextMessageId++;
+  sentAt = performance.now();
+  host.post({
+    type: "query",
+    id: inflightId,
+    filters: buildFilters(),
+    day: state.day,
+    sortKey: state.sort,
+    offset: Math.max(0, first - WINDOW_PAD),
+    limit: visible + WINDOW_PAD * 2,
+  });
+}
+
+function flushQueued() {
+  if (!queuedQuery) return;
+  queuedQuery = false;
+  requestQuery();
+}
+
+let queuedWindow = false;
+
+function requestWindow(first, visible) {
+  // A query in flight will refresh the band anyway; a window already in
+  // flight is for a stale position. Either way, remember that the viewport
+  // still needs filling, or fast scrolling leaves the list showing rows from
+  // wherever it last landed.
+  if (inflightWindowId || inflightId) { queuedWindow = true; return; }
+  inflightWindowId = nextMessageId++;
+  host.post({
+    type: "window",
+    id: inflightWindowId,
+    offset: Math.max(0, first - WINDOW_PAD),
+    limit: visible + WINDOW_PAD * 2,
+  });
+}
+
+function flushQueuedWindow() {
+  if (!queuedWindow) return;
+  queuedWindow = false;
+  const { first, visible } = visibleRange();
+  requestWindow(first, visible);
+}
+
+function applyResult(msg) {
+  const rtt = performance.now() - sentAt;
+  resultCount = msg.count;
+  gridMins = msg.grid;
+  gridExtent = msg.gridExtent;
+  rowBand = { offset: msg.offset, length: msg.rowCount, data: msg.rows };
+
+  priceHist.update(msg.priceBins);
+  durHist.update(msg.durBins);
+
+  $("resultCount").textContent = resultCount.toLocaleString();
+  $("results").dataset.empty = resultCount === 0 ? "true" : "false";
+  $("spacer").style.height = Math.min(resultCount * ROW_H, MAX_SPACER_PX) + "px";
+  const list = $("list");
+  if (list.scrollTop > resultCount * ROW_H) list.scrollTop = 0;
+
+  const t1 = performance.now();
   renderCalendar();
-  renderList();
+  paintRows();
   const t2 = performance.now();
 
-  perf.query = t1 - t0;
+  perf.engine = msg.engineMs;
+  perf.rtt = rtt;
   perf.paint = t2 - t1;
-  perf.scanned = selection.scanned;
-  perf.history.push(t2 - t0);
+  perf.scanned = msg.scanned;
+  perf.history.push(rtt + perf.paint);
   if (perf.history.length > 80) perf.history.shift();
   renderHud();
   renderUrlState();
@@ -667,7 +844,7 @@ function buildCalendar() {
   }
 
   // Blank cells so day 0 lands under its real weekday.
-  const firstDow = new Date(slab.baseDayEpoch * 86400000).getUTCDay();
+  const firstDow = new Date(meta.baseDayEpoch * 86400000).getUTCDay();
   for (let i = 0; i < firstDow; i++) {
     const pad = document.createElement("div");
     pad.className = "day pad";
@@ -691,7 +868,7 @@ function buildCalendar() {
     if (!cell || cell.disabled) return;
     const d = Number(cell.dataset.day);
     state.day = state.day === d ? -1 : d; // clicking the chosen day clears it
-    runQuery();
+    requestQuery();
   });
 
   cal.addEventListener("keydown", (e) => {
@@ -713,7 +890,9 @@ function buildCalendar() {
 }
 
 function renderCalendar() {
-  const { min, max, filled } = valueExtent(gridMins);
+  // The extent comes from the engine alongside the grid: it already walked
+  // the buckets, so the page does not walk them again.
+  const { min, max, filled } = gridExtent;
   const span = max - min || 1;
 
   for (let d = 0; d < DAYS; d++) {
@@ -789,48 +968,64 @@ function makeRow() {
   return el;
 }
 
-function renderList() {
-  const list = $("list");
-  const c = slab.columns;
-  const order = orders[state.sort];
-  const viewport = list.clientHeight || 600;
-  const first = Math.max(0, Math.floor(list.scrollTop / ROW_H) - 3);
-  const visible = Math.min(selection.count - first, Math.ceil(viewport / ROW_H) + 6);
+/**
+ * Paints the visible slice out of the cached band. Scrolling inside the band
+ * costs nothing; crossing its edge asks the engine for a new one and repaints
+ * when it lands, which is why the band is padded either side.
+ */
+function paintRows() {
+  const { first, visible, scaled } = visibleRange();
+  // When the spacer is capped, a row's absolute index no longer maps to a
+  // pixel offset, so anchor the window to the current scroll position.
+  const anchor = scaled ? $("list").scrollTop : 0;
+  const count = Math.min(visible, Math.max(0, resultCount - first));
 
-  const rows = visible > 0 ? materializeWindow(order, selection.mask, first, visible) : [];
+  const bandStart = rowBand.offset;
+  const bandEnd = rowBand.offset + rowBand.length;
+  if (count > 0 && (first < bandStart || first + count > bandEnd)) {
+    requestWindow(first, visible);
+  }
 
-  for (let i = 0; i < rows.length; i++) {
-    const el = pool[i] || makeRow();
+  let painted = 0;
+  for (let i = 0; i < count; i++) {
+    const absolute = first + i;
+    if (absolute < bandStart || absolute >= bandEnd) continue;
+
+    const el = pool[painted] || makeRow();
     const p = el._parts;
-    const row = rows[i];
+    const base = (absolute - bandStart) * FIELD_COUNT;
+    const d = rowBand.data;
 
-    const dep = c.depMin[row], arr = c.arrMin[row], stops = c.stops[row];
+    const dep = d[base + F.dep];
+    const arr = d[base + F.arr];
+    const stops = d[base + F.stops];
     const depDay = Math.floor(dep / 1440), arrDay = Math.floor(arr / 1440);
 
-    p.carrier.textContent = CARRIERS[c.carrierId[row]];
+    p.carrier.textContent = CARRIERS[d[base + F.carrier]];
     p.depTime.textContent = clock(dep);
-    p.depPort.textContent = AIRPORTS[c.originId[row]];
+    p.depPort.textContent = AIRPORTS[d[base + F.origin]];
     p.arrTime.innerHTML = clock(arr) + (arrDay > depDay ? "<sup>+" + (arrDay - depDay) + "</sup>" : "");
-    p.arrPort.textContent = AIRPORTS[c.destId[row]];
-    p.dur.textContent = hoursMins(c.durationMin[row]);
+    p.arrPort.textContent = AIRPORTS[d[base + F.dest]];
+    p.dur.textContent = hoursMins(d[base + F.dur]);
     p.stops.textContent = stopLabel(stops);
     p.stops.className = "s" + (stops === 0 ? " direct" : "");
-    p.price.textContent = money(c.priceCents[row]);
+    p.price.textContent = money(d[base + F.price]);
     p.date.textContent = dateLabels[depDay] || "";
 
     // Stop markers sit on the route line, evenly spaced.
     p.path.className = "path" + (stops === 0 ? " nonstop" : "");
-    const want = stops;
-    while (p.path.children.length - 1 > want) p.path.lastChild.remove();
-    while (p.path.children.length - 1 < want) p.path.appendChild(document.createElement("b"));
-    for (let s = 0; s < want; s++) {
-      p.path.children[s + 1].style.left = ((100 * (s + 1)) / (want + 1)).toFixed(0) + "%";
+    while (p.path.children.length - 1 > stops) p.path.lastChild.remove();
+    while (p.path.children.length - 1 < stops) p.path.appendChild(document.createElement("b"));
+    for (let p2 = 0; p2 < stops; p2++) {
+      p.path.children[p2 + 1].style.left = ((100 * (p2 + 1)) / (stops + 1)).toFixed(0) + "%";
     }
 
-    el.style.transform = "translateY(" + (first + i) * ROW_H + "px)";
+    el.style.transform =
+      "translateY(" + (scaled ? anchor + painted * ROW_H : absolute * ROW_H) + "px)";
     el.style.display = "";
+    painted++;
   }
-  for (let i = rows.length; i < pool.length; i++) pool[i].style.display = "none";
+  for (let i = painted; i < pool.length; i++) pool[i].style.display = "none";
 }
 
 /* ---------- range control with live histogram ---------- */
@@ -924,7 +1119,7 @@ function makeRangeControl(opts) {
     if (dragging === "lo") opts.set(Math.min(v, v1), v1);
     else opts.set(v0, Math.max(v, v0));
     positions();
-    runQuery();
+    requestQuery();
   }
 
   for (const [el, which] of [[lo, "lo"], [hi, "hi"]]) {
@@ -941,32 +1136,23 @@ function makeRangeControl(opts) {
       if (which === "lo") opts.set(Math.round(Math.min(Math.max(domain[0], v0 + delta), v1)), v1);
       else opts.set(v0, Math.round(Math.max(Math.min(domain[1], v1 + delta), v0)));
       positions();
-      runQuery();
+      requestQuery();
     });
   }
 
-  let backdropReady = false;
   const api = {
-    update(sel) {
-      const col = slab.columns[opts.column];
-      if (!backdropReady) {
-        histogram(col, null, domain[0], domain[1], BINS, backdrop);
-        backdropReady = true;
-      }
-      if (sel.count === slab.rowCount) {
-        active.set(backdrop); // nothing filtered: the active series is the backdrop
-      } else {
-        histogram(col, sel, domain[0], domain[1], BINS, active);
-      }
+    /** `bins` is the active series, computed by the engine for this query. */
+    update(bins) {
+      active.set(bins);
       draw();
       positions();
     },
-    /** Baseline series over every row — load-time work, not query work. */
-    prime() {
-      histogram(slab.columns[opts.column], null, domain[0], domain[1], BINS, backdrop);
-      backdropReady = true;
+    /** Baseline over every row — sent once with the engine's ready message. */
+    prime(baseline) {
+      backdrop.set(baseline);
+      resize();
     },
-    refreshDomain() { domain = opts.domain(); backdropReady = false; resize(); },
+    refreshDomain() { domain = opts.domain(); resize(); },
     redraw: draw,
     resize,
   };
@@ -992,7 +1178,7 @@ function buildControls() {
     state.origin = Number(sel.value);
     $("routeLabel").textContent =
       state.origin < 0 ? "All origins → 30 cities" : AIRPORTS[state.origin] + " → 29 cities";
-    runQuery();
+    requestQuery();
   });
 
   priceHist = makeRangeControl({
@@ -1015,8 +1201,8 @@ function buildControls() {
 
   buildCalendar();
 
-  priceHist.prime();
-  durHist.prime();
+  priceHist.prime(meta.priceBackdrop);
+  durHist.prime(meta.durBackdrop);
 
   // Stops
   $("stopChips").addEventListener("click", (e) => {
@@ -1026,13 +1212,11 @@ function buildControls() {
     if (state.stops.has(v)) state.stops.delete(v); else state.stops.add(v);
     if (state.stops.size === 0) state.stops.add(v); // never leave an unusable empty set
     syncStops();
-    runQuery();
+    requestQuery();
   });
 
   // Airlines
-  const counts = new Uint32Array(CARRIERS.length);
-  const cc = slab.columns.carrierId;
-  for (let i = 0; i < slab.rowCount; i++) counts[cc[i]]++;
+  const counts = meta.carrierCounts;
   const list = $("carrierList");
   CARRIERS.forEach((code, i) => {
     const lab = document.createElement("label");
@@ -1045,7 +1229,7 @@ function buildControls() {
       if (state.carriers.size === 0) { state.carriers.add(i); e.target.checked = true; }
       $("carrierSummary").textContent =
         state.carriers.size === CARRIERS.length ? "all" : state.carriers.size + " of " + CARRIERS.length;
-      runQuery();
+      requestQuery();
     });
     list.appendChild(lab);
   });
@@ -1058,13 +1242,13 @@ function buildControls() {
     document.querySelectorAll(".sort").forEach((b) =>
       b.setAttribute("aria-pressed", String(b === btn)));
     $("list").scrollTop = 0;
-    runQuery();
+    requestQuery();
   });
 
   // Scrolling only repaints; it never re-filters.
   $("list").addEventListener("scroll", () => {
     const t0 = performance.now();
-    renderList();
+    paintRows();
     perf.paint = performance.now() - t0;
     renderHud();
   }, { passive: true });
@@ -1074,10 +1258,10 @@ function buildControls() {
     syncControlsFromState();
     priceHist.refreshDomain();
     durHist.refreshDomain();
-    runQuery();
+    requestQuery();
   });
 
-  window.addEventListener("resize", () => { renderList(); });
+  window.addEventListener("resize", () => { paintRows(); });
 
   // Someone pasting a link into the open tab, or stepping through history.
   // Our own writes are ignored: they already match the current state.
@@ -1087,7 +1271,7 @@ function buildControls() {
     if (!readUrlState()) return;
     syncControlsFromState();
     $("list").scrollTop = 0;
-    runQuery();
+    requestQuery();
   });
   const scheme = window.matchMedia("(prefers-color-scheme: dark)");
   scheme.addEventListener("change", () => {
@@ -1102,12 +1286,16 @@ function syncStops() {
 
 /* ---------- perf HUD ---------- */
 function renderHud() {
-  const total = perf.query + perf.paint;
+  // What the user actually waits for is the round trip plus the repaint;
+  // engine time is reported separately so the two are distinguishable.
+  const total = perf.rtt + perf.paint;
   const cls = total < 8 ? "good" : total < 16 ? "warn" : "bad";
-  const q = $("hudQuery"), p = $("hudPaint");
-  q.textContent = perf.query.toFixed(2) + "ms";
+  const q = $("hudQuery"), r = $("hudRtt"), p = $("hudPaint");
+  q.textContent = perf.engine.toFixed(2) + "ms";
+  r.textContent = perf.rtt.toFixed(2) + "ms";
   p.textContent = perf.paint.toFixed(2) + "ms";
-  q.className = "mono " + cls;
+  q.className = "mono";
+  r.className = "mono " + cls;
   p.className = "mono " + cls;
   $("hudScan").textContent = (perf.scanned / 1000).toFixed(0) + "k rows";
   $("hudDot").style.background = "var(--" + (cls === "good" ? "ok" : cls === "warn" ? "warn" : "bad") + ")";
