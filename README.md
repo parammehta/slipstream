@@ -32,6 +32,8 @@ Apple Silicon, Node 24, `npm run bench`:
 | Date grid, 60 day buckets | 0.66ms | 0.67ms |
 | Window of 40 rows | 0.53ms | 0.54ms |
 | **Full frame** (filter + grid + histogram + window) | **8.79ms** | **8.87ms** |
+| Multi-city: 3 leg queries + combine | 7.42ms | 7.54ms |
+| — of which, combining 40 trips | **0.02ms** | 0.03ms |
 
 Measured over the harvested dataset rather than a synthetic one, so the
 numbers reflect the distributions the product actually queries. Selectivity
@@ -101,6 +103,18 @@ lets go. Where a Worker cannot be created (a `file://` origin, mostly) the
 same bundle is evaluated on the main thread behind the same message protocol,
 so there is one implementation of the query path either way.
 
+**Multi-city is a composition, not a row type.** A three-leg trip over 100k
+offers per leg is 10^15 combinations, so itineraries are never materialised.
+Each leg is filtered and sorted independently — work the engine already does —
+and the cheapest whole trips are walked out of the frontier: the cheapest trip
+is the cheapest offer on every leg, and every trip after it differs from one
+already found by a single step up on a single leg. A heap over that frontier
+yields them in order, so forty itineraries cost forty pops. That step measures
+**0.02ms**; the legs' own queries are the entire cost.
+
+This is why multi-city needed no change to the slab format, which is the
+opposite of what I expected before writing it.
+
 **Windowed materialization.** The virtualized list asks for the ~40 rows it is
 about to paint. `materializeWindow` walks the sort order, skips rows outside
 the membership bitset, and stops at the limit — the full result set is never
@@ -118,6 +132,7 @@ src/core/
   sort.ts        stable LSD radix argsort
   histogram.ts   binning over the current selection
   query.ts       windowed materialization for the virtual list
+  combine.ts     top-k itineraries over a frontier heap
   bitset.ts      membership bitsets
   markets.ts     GENERATED — harvested markets and their fare curves
   offers.ts      offers sampled from real fare curves
@@ -233,7 +248,7 @@ Query-string switches:
 Requires Node 24+ (native TypeScript stripping, `node:test`). No install step.
 
 ```bash
-npm test               # 100 tests, including the demo staleness check
+npm test               # 137 tests, including the demo staleness check
 npm run bench          # or: node scripts/bench.ts 5000000
 npm run build:demo     # regenerate demo/index.html from src/core
 npm run check:demo     # verify it is current without writing
@@ -252,7 +267,7 @@ discovered at runtime.
 4. ~~Flexible-date price grid: cheapest fare per day, filterable~~ — done
 5. ~~Harvester: real fares from the US DOT DB1B ticket sample~~ — done
 6. ~~Worker wrapper: move the engine off the main thread~~ — done
-7. Multi-city legs
+7. ~~Multi-city legs~~ — done
 8. ~~URL state: read the hash back on load, not just write it~~ — done
 9. Write-up: benchmarks, format comparison, profiler traces
 

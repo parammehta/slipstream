@@ -6,6 +6,7 @@ import { applyFilters, refineSelection, createScratch, type Filter, type Selecti
 import { argsortColumn } from '../core/sort.ts';
 import { histogram } from '../core/histogram.ts';
 import { materializeWindow } from '../core/query.ts';
+import { topKCombinations, MAX_LEGS, type LegCandidates } from '../core/combine.ts';
 import { minPerBucket, valueExtent, MINUTES_PER_DAY, NO_VALUE } from '../core/buckets.ts';
 import type { Slab } from '../core/format.ts';
 
@@ -19,6 +20,8 @@ import type { Slab } from '../core/format.ts';
  */
 
 const DAY_BUCKETS = 60;
+/** Itineraries shown per multi-city search; also caps per-leg candidates. */
+const MAX_RESULTS_PER_TRIP = 40;
 const HIST_BINS = 64;
 /** Fields packed per row for the virtual list, in this order. */
 const ROW_FIELDS = ['depMin', 'arrMin', 'durationMin', 'priceCents', 'stops', 'carrierId', 'originId', 'destId'] as const;
@@ -27,6 +30,8 @@ let slab: Slab;
 let orders: Record<string, Uint32Array>;
 let scratch: ReturnType<typeof createScratch>;
 let scratchB: ReturnType<typeof createScratch>;
+/** One set of buffers per leg, so legs do not clobber each other. */
+let legScratch: Array<ReturnType<typeof createScratch>> = [];
 let selection: Selection;
 let sortKey = 'priceCents';
 
@@ -53,6 +58,7 @@ function init(rowCount: number, seed: number) {
   slab = decodeSlab(buf);
   scratch = createScratch(slab.rowCount);
   scratchB = createScratch(slab.rowCount);
+  legScratch = Array.from({ length: MAX_LEGS }, () => createScratch(slab.rowCount));
 
   const sorted = performance.now();
   orders = {
@@ -88,6 +94,8 @@ function init(rowCount: number, seed: number) {
     bins: HIST_BINS,
     rowFields: ROW_FIELDS,
     marketCount: marketDataset().markets.length,
+    maxLegs: MAX_LEGS,
+    maxTrips: MAX_RESULTS_PER_TRIP,
     period: marketDataset().period,
     attribution: marketDataset().attribution,
     priceDomain,
@@ -108,13 +116,7 @@ function packWindow(offset: number, limit: number): { rows: Int32Array; length: 
   const order = orders[sortKey];
   const ids = materializeWindow(order, selection.mask, offset, limit);
   const out = new Int32Array(ids.length * ROW_FIELDS.length);
-  for (let i = 0; i < ids.length; i++) {
-    const row = ids[i];
-    const base = i * ROW_FIELDS.length;
-    for (let f = 0; f < ROW_FIELDS.length; f++) {
-      out[base + f] = slab.columns[ROW_FIELDS[f]][row];
-    }
-  }
+  for (let i = 0; i < ids.length; i++) packRow(out, i * ROW_FIELDS.length, ids[i]);
   return { rows: out, length: ids.length };
 }
 
@@ -174,6 +176,80 @@ function dayFilter(day: number): Filter {
   };
 }
 
+/**
+ * Walking the global price order costs a pass over every row, which is the
+ * right trade when the selection is a large fraction of the slab. A single
+ * multi-city leg is the opposite case — one route on one day can be fifty
+ * rows out of half a million — and there it is far cheaper to gather that
+ * handful and sort it directly.
+ */
+const DIRECT_SORT_LIMIT = 20_000;
+
+function cheapestRows(selection: Selection, k: number): Uint32Array {
+  if (selection.count > DIRECT_SORT_LIMIT) {
+    return materializeWindow(orders.priceCents, selection.mask, 0, k);
+  }
+
+  const prices = slab.columns.priceCents;
+  const rows = selection.rows.slice(0, selection.count);
+  // Array#sort on a typed array sorts numerically and in place.
+  const sorted = Array.from(rows).sort((a, b) => prices[a] - prices[b]);
+  return Uint32Array.from(sorted.slice(0, k));
+}
+
+/** Pack one offer's fields, used by both the list and itinerary legs. */
+function packRow(out: Int32Array, at: number, row: number): void {
+  for (let f = 0; f < ROW_FIELDS.length; f++) {
+    out[at + f] = slab.columns[ROW_FIELDS[f]][row];
+  }
+}
+
+/**
+ * Multi-city: filter each leg independently, take its cheapest candidates,
+ * then walk the frontier for the cheapest whole trips. The itineraries are
+ * never materialised — three legs of 100k offers is 10^15 combinations.
+ */
+function multiQuery(msg: {
+  shared: Filter[];
+  legs: Array<{ filters: Filter[] }>;
+  k: number;
+}) {
+  const t0 = performance.now();
+  const k = Math.max(1, Math.min(MAX_RESULTS_PER_TRIP, msg.k | 0));
+  const legSpecs = msg.legs.slice(0, MAX_LEGS);
+
+  const candidates: LegCandidates[] = [];
+  const legCounts = new Uint32Array(legSpecs.length);
+
+  for (let l = 0; l < legSpecs.length; l++) {
+    const selection = applyFilters(slab, [...msg.shared, ...legSpecs[l].filters], legScratch[l]);
+    legCounts[l] = selection.count;
+    // Only the k cheapest can ever appear in a top-k trip.
+    const rows = cheapestRows(selection, k);
+    const prices = new Uint32Array(rows.length);
+    for (let i = 0; i < rows.length; i++) prices[i] = slab.columns.priceCents[rows[i]];
+    candidates.push({ prices, rows, length: rows.length });
+  }
+
+  const combo = topKCombinations(candidates, k);
+  const legCount = legSpecs.length;
+  const packed = new Int32Array(combo.count * legCount * ROW_FIELDS.length);
+  for (let i = 0; i < combo.count; i++) {
+    for (let l = 0; l < legCount; l++) {
+      packRow(packed, (i * legCount + l) * ROW_FIELDS.length, combo.rows[i * legCount + l]);
+    }
+  }
+
+  return {
+    count: combo.count,
+    legCount,
+    legCounts,
+    totals: Float64Array.from(combo.totals),
+    rows: packed,
+    engineMs: performance.now() - t0,
+  };
+}
+
 /** Scroll-only: the selection is unchanged, just hand back different rows. */
 function windowOnly(msg: { offset: number; limit: number }) {
   const t0 = performance.now();
@@ -207,6 +283,14 @@ export function handleMessage(msg: any): { reply: any; transfer: ArrayBufferLike
       transfer: [r.grid.buffer, r.priceBins.buffer, r.durBins.buffer, r.rows.buffer],
     };
   }
+  if (msg.type === 'multiQuery') {
+    const r = multiQuery(msg);
+    return {
+      reply: { type: 'trips', id: msg.id, ...r },
+      transfer: [r.totals.buffer, r.rows.buffer, r.legCounts.buffer],
+    };
+  }
+
   if (msg.type === 'window') {
     const r = windowOnly(msg);
     return { reply: { type: 'rows', id: msg.id, ...r }, transfer: [r.rows.buffer] };

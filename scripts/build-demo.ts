@@ -41,6 +41,7 @@ export const BUNDLE: ReadonlyArray<{ dir: string; file: string }> = [
   { dir: 'src/core', file: 'sort.ts' },
   { dir: 'src/core', file: 'histogram.ts' },
   { dir: 'src/core', file: 'query.ts' },
+  { dir: 'src/core', file: 'combine.ts' },
   { dir: 'src/harvest', file: 'distribution.ts' },
   { dir: 'src/core', file: 'market-data.ts' },
   { dir: 'src/core', file: 'markets.ts' },

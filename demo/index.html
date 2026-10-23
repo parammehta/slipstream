@@ -195,6 +195,91 @@ body {
 .carrier .code { font-weight: 600; letter-spacing: .03em; }
 .carrier .n { margin-left: auto; color: var(--muted); font-size: 11px; }
 
+/* trip mode + multi-city leg builder */
+.modes { display: flex; gap: 2px; background: var(--surface-2); padding: 2px; border-radius: 7px; }
+.mode {
+  flex: 1; appearance: none; border: 0; cursor: pointer; font: inherit;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  padding: 6px 8px; border-radius: 5px; background: none;
+}
+.mode[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+.mode:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.legs { display: flex; flex-direction: column; gap: 8px; }
+.leg {
+  display: grid; grid-template-columns: 14px 1fr 12px 1fr 22px;
+  align-items: center; gap: 5px 6px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--line);
+}
+.leg:last-of-type { border-bottom: 0; padding-bottom: 0; }
+.leg .n { font-size: 10px; color: var(--muted); font-weight: 700; }
+.leg .arrow { font-size: 11px; color: var(--muted); text-align: center; }
+.leg select {
+  width: 100%; min-width: 0; font: inherit; font-size: 12px; padding: 5px 4px;
+  border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--surface); color: var(--ink);
+}
+.leg select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.leg .day { grid-column: 2 / -1; font-size: 11px; }
+.leg .drop {
+  appearance: none; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+}
+.leg .drop:hover { color: var(--bad); background: var(--surface-2); }
+.leg .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.leg-row { display: grid; grid-template-columns: 14px 1fr 10px 1fr 22px; align-items: center; gap: 5px; }
+
+.addleg {
+  appearance: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+  margin-top: 10px; padding: 7px; width: 100%;
+  border: 1px dashed var(--line-strong); border-radius: 6px;
+  background: none; color: var(--ink-body);
+}
+.addleg:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+.addleg:disabled { opacity: .45; cursor: default; }
+.addleg:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* itinerary results */
+.trips { display: none; overflow-y: auto; padding: 10px 14px 16px; }
+.trip {
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface);
+  margin-bottom: 9px; display: grid; grid-template-columns: 1fr 104px;
+  align-items: center; overflow: hidden;
+}
+.trip:hover { border-color: var(--line-strong); }
+.trip-legs { display: flex; flex-direction: column; }
+.trip-leg {
+  display: grid; grid-template-columns: 40px 54px 44px 14px 54px 44px 1fr auto;
+  align-items: center; gap: 8px; padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.trip-leg:last-child { border-bottom: 0; }
+.trip-leg .carrier-code { font-size: 11px; padding: 3px 0; }
+.trip-leg .t { font-size: 14px; font-weight: 500; }
+.trip-leg .t sup { font-size: 9px; color: var(--accent); font-weight: 600; }
+.trip-leg .p { font-size: 11px; color: var(--muted); letter-spacing: .06em; }
+.trip-leg .to { color: var(--muted); font-size: 11px; text-align: center; }
+.trip-leg .meta { font-size: 11px; color: var(--muted); text-align: right; }
+.trip-leg .fare { font-size: 12px; font-weight: 500; text-align: right; }
+.trip-total {
+  text-align: right; padding: 0 16px; border-left: 1px solid var(--line);
+  align-self: stretch; display: flex; flex-direction: column; justify-content: center;
+}
+.trip-total b { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.empty-trips {
+  padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px;
+}
+.trip-total span {
+  font-size: 9px; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--muted); font-weight: 600;
+}
+
+/* mode switching */
+.app[data-mode="multi"] .list { display: none; }
+.app[data-mode="multi"] .trips { display: block; }
+.app[data-mode="multi"] .oneway-only { display: none; }
+.app[data-mode="oneway"] .multi-only { display: none; }
+
 /* departure-date grid: colour encodes the cheapest fare that day */
 .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
 .cal .dow {
@@ -374,7 +459,7 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
   <p id="bootSub">columnar encode · radix argsort</p>
 </div>
 
-<div class="app">
+<div class="app" id="app" data-mode="oneway">
   <header class="bar">
     <div class="brand"><b>Slipstream</b> <span>Engine demo</span></div>
     <div class="route">
@@ -393,17 +478,31 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
   <div class="body">
     <aside class="rail">
       <div class="group">
+        <h2>Trip</h2>
+        <div class="modes" role="group" aria-label="Trip type">
+          <button class="mode" data-mode="oneway" aria-pressed="true">One way</button>
+          <button class="mode" data-mode="multi" aria-pressed="false">Multi-city</button>
+        </div>
+      </div>
+
+      <div class="group multi-only">
+        <h2>Legs <em class="mono" id="legSummary">2 legs</em></h2>
+        <div class="legs" id="legs"></div>
+        <button class="addleg" id="addLeg" type="button">Add a leg</button>
+      </div>
+
+      <div class="group oneway-only">
         <h2>Departure date <em class="mono" id="dateLabel">any date</em></h2>
         <div class="cal" id="cal"></div>
         <div class="cal-legend"><span>cheapest</span><i></i><span>priciest</span></div>
       </div>
 
-      <div class="group">
+      <div class="group oneway-only">
         <h2>Origin</h2>
         <select class="origin" id="originSelect" aria-label="Origin airport"></select>
       </div>
 
-      <div class="group">
+      <div class="group oneway-only">
         <h2>Price <em class="mono" id="priceLabel">—</em></h2>
         <div class="range" id="priceRange">
           <canvas id="priceCanvas"></canvas>
@@ -416,7 +515,7 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
         </div>
       </div>
 
-      <div class="group">
+      <div class="group oneway-only">
         <h2>Duration <em class="mono" id="durLabel">—</em></h2>
         <div class="range" id="durRange">
           <canvas id="durCanvas"></canvas>
@@ -454,6 +553,7 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
           <p>Widen the price or duration range, or add back a stop count.</p>
         </div>
       </div>
+      <div class="trips" id="trips"></div>
       <div class="foot">
         <span>Shareable state</span>
         <span class="url mono" id="urlState">#</span>
@@ -1085,6 +1185,145 @@ function rankOf(order             , mask             , row        )         {
   return -1;
 }
 
+/* ---- src/core/combine.ts ---- */
+/**
+ * Composing multi-city itineraries out of one-way offers.
+ *
+ * A three-leg trip over 100k offers per leg has 10^15 combinations, so the
+ * itineraries are never materialised. Each leg is filtered and sorted
+ * independently — work the engine already does — and the cheapest
+ * combinations are walked out of the frontier.
+ *
+ * The cheapest itinerary is necessarily the cheapest offer on every leg. The
+ * next cheapest differs from some already-found combination by one step up on
+ * exactly one leg, so a heap over that frontier yields them in order. Finding
+ * 40 itineraries costs 40 pops, not 10^15 comparisons.
+ *
+ * This is why multi-city needed no change to the slab: itineraries are a
+ * query-time composition, not a row type.
+ */
+
+/** Packing the index tuple into one integer caps both of these. */
+const MAX_LEGS = 4;
+const MAX_RESULTS = 255;
+
+const EMPTY              = {
+  rows: new Uint32Array(0),
+  totals: new Float64Array(0),
+  count: 0,
+  legCount: 0,
+};
+
+/** Index tuples pack one byte per leg, which is why both limits are 255. */
+function packKey(indices            , offset        , legCount        )         {
+  let key = 0;
+  for (let l = 0; l < legCount; l++) key = key * 256 + indices[offset + l];
+  return key;
+}
+
+function topKCombinations(legs                 , k        )              {
+  const legCount = legs.length;
+  if (legCount === 0 || k <= 0) return EMPTY;
+  if (legCount > MAX_LEGS) throw new Error(`topKCombinations: at most ${MAX_LEGS} legs`);
+  if (k > MAX_RESULTS) throw new Error(`topKCombinations: at most ${MAX_RESULTS} results`);
+  // One empty leg means the trip cannot be flown at all.
+  for (const leg of legs) if (leg.length === 0) return { ...EMPTY, legCount };
+
+  // Binary heap over frontier tuples, as parallel arrays to avoid per-node
+  // objects: a drag re-runs this on every frame.
+  const capacity = (k + 1) * legCount + legCount + 1;
+  const heapTotals = new Float64Array(capacity);
+  const heapIdx = new Int32Array(capacity * legCount);
+  let heapSize = 0;
+
+  const swap = (a        , b        ) => {
+    const t = heapTotals[a];
+    heapTotals[a] = heapTotals[b];
+    heapTotals[b] = t;
+    for (let l = 0; l < legCount; l++) {
+      const ti = heapIdx[a * legCount + l];
+      heapIdx[a * legCount + l] = heapIdx[b * legCount + l];
+      heapIdx[b * legCount + l] = ti;
+    }
+  };
+
+  const push = (total        , source            , sourceOffset        ) => {
+    if (heapSize >= capacity) return; // frontier is bounded by k; nothing to lose
+    const at = heapSize++;
+    heapTotals[at] = total;
+    for (let l = 0; l < legCount; l++) heapIdx[at * legCount + l] = source[sourceOffset + l];
+    let node = at;
+    while (node > 0) {
+      const parent = (node - 1) >> 1;
+      if (heapTotals[parent] <= heapTotals[node]) break;
+      swap(parent, node);
+      node = parent;
+    }
+  };
+
+  const pop = () => {
+    swap(0, --heapSize);
+    let node = 0;
+    for (;;) {
+      const left = node * 2 + 1;
+      const right = left + 1;
+      let smallest = node;
+      if (left < heapSize && heapTotals[left] < heapTotals[smallest]) smallest = left;
+      if (right < heapSize && heapTotals[right] < heapTotals[smallest]) smallest = right;
+      if (smallest === node) break;
+      swap(node, smallest);
+      node = smallest;
+    }
+  };
+
+  const seen = new Set        ();
+  const start = new Int32Array(legCount);
+  let startTotal = 0;
+  for (let l = 0; l < legCount; l++) startTotal += legs[l].prices[0];
+  push(startTotal, start, 0);
+  seen.add(0);
+
+  const outRows = new Uint32Array(k * legCount);
+  const outTotals = new Float64Array(k);
+  const neighbour = new Int32Array(legCount);
+  let found = 0;
+
+  while (found < k && heapSize > 0) {
+    const total = heapTotals[0];
+    // Copy before pop: popping overwrites slot 0.
+    for (let l = 0; l < legCount; l++) neighbour[l] = heapIdx[l];
+    pop();
+
+    for (let l = 0; l < legCount; l++) {
+      outRows[found * legCount + l] = legs[l].rows[neighbour[l]];
+    }
+    outTotals[found] = total;
+    found++;
+
+    // Step up one leg at a time; every unseen successor joins the frontier.
+    for (let l = 0; l < legCount; l++) {
+      const next = neighbour[l] + 1;
+      if (next >= legs[l].length || next > MAX_RESULTS) continue;
+      neighbour[l] = next;
+      const key = packKey(neighbour, 0, legCount);
+      if (!seen.has(key)) {
+        seen.add(key);
+        let sum = 0;
+        for (let j = 0; j < legCount; j++) sum += legs[j].prices[neighbour[j]];
+        push(sum, neighbour, 0);
+      }
+      neighbour[l] = next - 1;
+    }
+  }
+
+  return {
+    rows: found === k ? outRows : outRows.subarray(0, found * legCount),
+    totals: found === k ? outTotals : outTotals.subarray(0, found),
+    count: found,
+    legCount,
+  };
+}
+
 /* ---- src/harvest/distribution.ts ---- */
 /**
  * Fare distributions, compressed to quantiles.
@@ -1415,6 +1654,8 @@ function generateOffersFromMarkets(
  */
 
 const DAY_BUCKETS = 60;
+/** Itineraries shown per multi-city search; also caps per-leg candidates. */
+const MAX_RESULTS_PER_TRIP = 40;
 const HIST_BINS = 64;
 /** Fields packed per row for the virtual list, in this order. */
 const ROW_FIELDS = ['depMin', 'arrMin', 'durationMin', 'priceCents', 'stops', 'carrierId', 'originId', 'destId']         ;
@@ -1423,6 +1664,8 @@ let slab      ;
 let orders                             ;
 let scratch                                  ;
 let scratchB                                  ;
+/** One set of buffers per leg, so legs do not clobber each other. */
+let legScratch                                          = [];
 let selection           ;
 let sortKey = 'priceCents';
 
@@ -1449,6 +1692,7 @@ function init(rowCount        , seed        ) {
   slab = decodeSlab(buf);
   scratch = createScratch(slab.rowCount);
   scratchB = createScratch(slab.rowCount);
+  legScratch = Array.from({ length: MAX_LEGS }, () => createScratch(slab.rowCount));
 
   const sorted = performance.now();
   orders = {
@@ -1484,6 +1728,8 @@ function init(rowCount        , seed        ) {
     bins: HIST_BINS,
     rowFields: ROW_FIELDS,
     marketCount: marketDataset().markets.length,
+    maxLegs: MAX_LEGS,
+    maxTrips: MAX_RESULTS_PER_TRIP,
     period: marketDataset().period,
     attribution: marketDataset().attribution,
     priceDomain,
@@ -1504,13 +1750,7 @@ function packWindow(offset        , limit        )                              
   const order = orders[sortKey];
   const ids = materializeWindow(order, selection.mask, offset, limit);
   const out = new Int32Array(ids.length * ROW_FIELDS.length);
-  for (let i = 0; i < ids.length; i++) {
-    const row = ids[i];
-    const base = i * ROW_FIELDS.length;
-    for (let f = 0; f < ROW_FIELDS.length; f++) {
-      out[base + f] = slab.columns[ROW_FIELDS[f]][row];
-    }
-  }
+  for (let i = 0; i < ids.length; i++) packRow(out, i * ROW_FIELDS.length, ids[i]);
   return { rows: out, length: ids.length };
 }
 
@@ -1566,6 +1806,78 @@ function dayFilter(day        )         {
   };
 }
 
+/**
+ * Walking the global price order costs a pass over every row, which is the
+ * right trade when the selection is a large fraction of the slab. A single
+ * multi-city leg is the opposite case — one route on one day can be fifty
+ * rows out of half a million — and there it is far cheaper to gather that
+ * handful and sort it directly.
+ */
+const DIRECT_SORT_LIMIT = 20_000;
+
+function cheapestRows(selection           , k        )              {
+  if (selection.count > DIRECT_SORT_LIMIT) {
+    return materializeWindow(orders.priceCents, selection.mask, 0, k);
+  }
+
+  const prices = slab.columns.priceCents;
+  const rows = selection.rows.slice(0, selection.count);
+  // Array#sort on a typed array sorts numerically and in place.
+  const sorted = Array.from(rows).sort((a, b) => prices[a] - prices[b]);
+  return Uint32Array.from(sorted.slice(0, k));
+}
+
+/** Pack one offer's fields, used by both the list and itinerary legs. */
+function packRow(out            , at        , row        )       {
+  for (let f = 0; f < ROW_FIELDS.length; f++) {
+    out[at + f] = slab.columns[ROW_FIELDS[f]][row];
+  }
+}
+
+/**
+ * Multi-city: filter each leg independently, take its cheapest candidates,
+ * then walk the frontier for the cheapest whole trips. The itineraries are
+ * never materialised — three legs of 100k offers is 10^15 combinations.
+ */
+function multiQuery(msg
+
+ ) {
+  const t0 = performance.now();
+  const k = Math.max(1, Math.min(MAX_RESULTS_PER_TRIP, msg.k | 0));
+  const legSpecs = msg.legs.slice(0, MAX_LEGS);
+
+  const candidates                  = [];
+  const legCounts = new Uint32Array(legSpecs.length);
+
+  for (let l = 0; l < legSpecs.length; l++) {
+    const selection = applyFilters(slab, [...msg.shared, ...legSpecs[l].filters], legScratch[l]);
+    legCounts[l] = selection.count;
+    // Only the k cheapest can ever appear in a top-k trip.
+    const rows = cheapestRows(selection, k);
+    const prices = new Uint32Array(rows.length);
+    for (let i = 0; i < rows.length; i++) prices[i] = slab.columns.priceCents[rows[i]];
+    candidates.push({ prices, rows, length: rows.length });
+  }
+
+  const combo = topKCombinations(candidates, k);
+  const legCount = legSpecs.length;
+  const packed = new Int32Array(combo.count * legCount * ROW_FIELDS.length);
+  for (let i = 0; i < combo.count; i++) {
+    for (let l = 0; l < legCount; l++) {
+      packRow(packed, (i * legCount + l) * ROW_FIELDS.length, combo.rows[i * legCount + l]);
+    }
+  }
+
+  return {
+    count: combo.count,
+    legCount,
+    legCounts,
+    totals: Float64Array.from(combo.totals),
+    rows: packed,
+    engineMs: performance.now() - t0,
+  };
+}
+
 /** Scroll-only: the selection is unchanged, just hand back different rows. */
 function windowOnly(msg                                   ) {
   const t0 = performance.now();
@@ -1599,6 +1911,14 @@ function handleMessage(msg     )                                              {
       transfer: [r.grid.buffer, r.priceBins.buffer, r.durBins.buffer, r.rows.buffer],
     };
   }
+  if (msg.type === 'multiQuery') {
+    const r = multiQuery(msg);
+    return {
+      reply: { type: 'trips', id: msg.id, ...r },
+      transfer: [r.totals.buffer, r.rows.buffer, r.legCounts.buffer],
+    };
+  }
+
   if (msg.type === 'window') {
     const r = windowOnly(msg);
     return { reply: { type: 'rows', id: msg.id, ...r }, transfer: [r.rows.buffer] };
@@ -1663,6 +1983,12 @@ let rowBand = { offset: 0, length: 0, data: new Int32Array(0) };
 
 const dayCells = [];
 const state = {
+  mode: "oneway",
+  /**
+   * Multi-city legs. Each carries a date: without one, every leg finds the
+   * same globally cheapest flight and the "trip" is one hop repeated.
+   */
+  legs: [{ origin: -1, dest: -1, day: 7 }, { origin: -1, dest: -1, day: 14 }],
   origin: -1,
   day: -1,
   price: [0, 0],
@@ -1803,6 +2129,14 @@ function onEngineMessage(msg) {
     return;
   }
 
+  if (msg.type === "trips") {
+    if (msg.id !== inflightId) return;
+    inflightId = 0;
+    applyTrips(msg);
+    flushQueued();
+    return;
+  }
+
   if (msg.type === "rows") {
     if (msg.id !== inflightWindowId) return;
     inflightWindowId = 0;
@@ -1902,9 +2236,21 @@ function visibleRange() {
  */
 function requestQuery() {
   if (inflightId) { queuedQuery = true; return; }
-  const { first, visible } = visibleRange();
   inflightId = nextMessageId++;
   sentAt = performance.now();
+
+  if (state.mode === "multi") {
+    host.post({
+      type: "multiQuery",
+      id: inflightId,
+      k: meta.maxTrips || 40,
+      shared: sharedFilters(),
+      legs: state.legs.map((leg) => ({ filters: legFilters(leg) })),
+    });
+    return;
+  }
+
+  const { first, visible } = visibleRange();
   host.post({
     type: "query",
     id: inflightId,
@@ -2078,6 +2424,223 @@ function renderCalendar() {
     label.textContent =
       dateLabels[state.day] + (v === NO_VALUE ? "" : " · from " + money(v));
   }
+}
+
+/* ---------- multi-city ---------- */
+/**
+ * `short` lists bare IATA codes: the leg builder sits in a 296px rail with
+ * two selects side by side, where "SFO — San Francisco" has nowhere to go.
+ */
+function airportOptions(selected, placeholder, short) {
+  const cities = meta.dicts.cities || [];
+  let html = '<option value="-1">' + placeholder + "</option>";
+  for (let i = 0; i < AIRPORTS.length; i++) {
+    const label = short || !cities[i] ? AIRPORTS[i] : AIRPORTS[i] + " — " + cities[i];
+    html += '<option value="' + i + '"' + (i === selected ? " selected" : "") + ">" + label + "</option>";
+  }
+  return html;
+}
+
+/** No "any date" here: a multi-city leg without a date is not a leg. */
+function dayOptions(selected) {
+  let html = "";
+  for (let d = 0; d < DAYS; d++) {
+    html += '<option value="' + d + '"' + (d === selected ? " selected" : "") + ">" +
+      dateLabels[d] + "</option>";
+  }
+  return html;
+}
+
+function renderLegs() {
+  const host = $("legs");
+  host.innerHTML = "";
+  state.legs.forEach((leg, i) => {
+    const row = document.createElement("div");
+    row.className = "leg";
+    row.dataset.leg = String(i);
+    row.innerHTML =
+      '<span class="n mono">' + (i + 1) + "</span>" +
+      '<select class="origin" aria-label="Leg ' + (i + 1) + ' origin">' + airportOptions(leg.origin, "Any", true) + "</select>" +
+      '<span class="arrow">→</span>' +
+      '<select class="dest" aria-label="Leg ' + (i + 1) + ' destination">' + airportOptions(leg.dest, "Anywhere", true) + "</select>" +
+      (state.legs.length > 2
+        ? '<button class="drop" type="button" aria-label="Remove leg ' + (i + 1) + '">×</button>'
+        : "<span></span>") +
+      '<select class="day" aria-label="Leg ' + (i + 1) + ' date">' + dayOptions(leg.day) + "</select>";
+    host.appendChild(row);
+  });
+
+  $("legSummary").textContent = state.legs.length + " legs";
+  $("addLeg").disabled = state.legs.length >= (meta.maxLegs || 4);
+}
+
+/**
+ * Keeps later legs after earlier ones. Combinations are assembled per leg, so
+ * nothing else stops leg two departing before leg one lands — the dates are
+ * what make a trip a sequence rather than a set.
+ */
+function enforceChronology(changed) {
+  for (let i = Math.max(1, changed + 1); i < state.legs.length; i++) {
+    if (state.legs[i].day <= state.legs[i - 1].day) {
+      state.legs[i].day = Math.min(DAYS - 1, state.legs[i - 1].day + 1);
+    }
+  }
+  for (let i = state.legs.length - 2; i >= 0; i--) {
+    if (state.legs[i].day >= state.legs[i + 1].day) {
+      state.legs[i].day = Math.max(0, state.legs[i + 1].day - 1);
+    }
+  }
+}
+
+function buildLegControls() {
+  $("legs").addEventListener("change", (e) => {
+    const row = e.target.closest(".leg");
+    if (!row) return;
+    const index = Number(row.dataset.leg);
+    const leg = state.legs[index];
+    const value = Number(e.target.value);
+
+    if (e.target.classList.contains("origin")) {
+      leg.origin = value;
+    } else if (e.target.classList.contains("dest")) {
+      leg.dest = value;
+      // A multi-city trip is continuous: the next leg starts where this one
+      // ended, which is what the traveller means by adding a leg.
+      const next = state.legs[index + 1];
+      if (next) next.origin = value;
+    } else if (e.target.classList.contains("day")) {
+      leg.day = value;
+    }
+
+    enforceChronology(index);
+    renderLegs();
+    requestQuery();
+  });
+
+  $("legs").addEventListener("click", (e) => {
+    const drop = e.target.closest(".drop");
+    if (!drop) return;
+    const i = Number(drop.closest(".leg").dataset.leg);
+    state.legs.splice(i, 1);
+    renderLegs();
+    requestQuery();
+  });
+
+  $("addLeg").addEventListener("click", () => {
+    if (state.legs.length >= (meta.maxLegs || 4)) return;
+    // A new leg starts where the previous one ended: that is the trip people
+    // are usually building.
+    const last = state.legs[state.legs.length - 1];
+    state.legs.push({
+      origin: last.dest,
+      dest: -1,
+      day: Math.min(DAYS - 1, last.day + 7),
+    });
+    enforceChronology(state.legs.length - 2);
+    renderLegs();
+    requestQuery();
+  });
+
+  document.querySelector(".modes").addEventListener("click", (e) => {
+    const button = e.target.closest(".mode");
+    if (!button || button.dataset.mode === state.mode) return;
+    setMode(button.dataset.mode);
+    requestQuery();
+  });
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  $("app").dataset.mode = mode;
+  document.querySelectorAll(".mode").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+  $("results").dataset.empty = "false";
+}
+
+/** Filters shared by every leg: whole-trip preferences, not per-leg ones. */
+function sharedFilters() {
+  const f = [];
+  if (state.stops.size < 3) f.push({ kind: "oneOf", column: "stops", values: [...state.stops] });
+  if (state.carriers.size < CARRIERS.length) {
+    f.push({ kind: "oneOf", column: "carrierId", values: [...state.carriers] });
+  }
+  return f;
+}
+
+function legFilters(leg) {
+  const f = [];
+  if (leg.origin >= 0) f.push({ kind: "oneOf", column: "originId", values: [leg.origin] });
+  if (leg.dest >= 0) f.push({ kind: "oneOf", column: "destId", values: [leg.dest] });
+  if (leg.day >= 0) {
+    f.push({
+      kind: "range", column: "depMin",
+      min: leg.day * 1440, max: (leg.day + 1) * 1440 - 1,
+    });
+  }
+  return f;
+}
+
+function applyTrips(msg) {
+  const rtt = performance.now() - sentAt;
+  const t1 = performance.now();
+  const host = $("trips");
+  const fields = FIELD_COUNT;
+
+  $("resultCount").textContent = msg.count.toLocaleString();
+  $("results").dataset.empty = "false";
+
+  if (msg.count === 0) {
+    const dead = [];
+    for (let l = 0; l < msg.legCounts.length; l++) if (msg.legCounts[l] === 0) dead.push(l + 1);
+    host.innerHTML =
+      '<div class="empty-trips">' +
+      (dead.length
+        ? "No flights at all on leg " + dead.join(" or ") + ". Widen that leg."
+        : "No trips match these filters.") +
+      "</div>";
+  } else {
+    let html = "";
+    for (let i = 0; i < msg.count; i++) {
+      let legsHtml = "";
+      for (let l = 0; l < msg.legCount; l++) {
+        const base = (i * msg.legCount + l) * fields;
+        const dep = msg.rows[base + F.dep];
+        const arr = msg.rows[base + F.arr];
+        const stops = msg.rows[base + F.stops];
+        const depDay = Math.floor(dep / 1440);
+        const arrDay = Math.floor(arr / 1440);
+        legsHtml +=
+          '<div class="trip-leg">' +
+          '<span class="carrier-code mono">' + CARRIERS[msg.rows[base + F.carrier]] + "</span>" +
+          '<span class="t mono">' + clock(dep) + "</span>" +
+          '<span class="p mono">' + AIRPORTS[msg.rows[base + F.origin]] + "</span>" +
+          '<span class="to">→</span>' +
+          '<span class="t mono">' + clock(arr) +
+            (arrDay > depDay ? "<sup>+" + (arrDay - depDay) + "</sup>" : "") + "</span>" +
+          '<span class="p mono">' + AIRPORTS[msg.rows[base + F.dest]] + "</span>" +
+          '<span class="meta">' + (dateLabels[depDay] || "") + " · " +
+            hoursMins(msg.rows[base + F.dur]) + " · " + stopLabel(stops) + "</span>" +
+          '<span class="fare mono">' + money(msg.rows[base + F.price]) + "</span>" +
+          "</div>";
+      }
+      html +=
+        '<article class="trip">' +
+        '<div class="trip-legs">' + legsHtml + "</div>" +
+        '<div class="trip-total"><b class="mono">' + money(msg.totals[i]) + "</b><span>total</span></div>" +
+        "</article>";
+    }
+    host.innerHTML = html;
+  }
+
+  const t2 = performance.now();
+  perf.engine = msg.engineMs;
+  perf.rtt = rtt;
+  perf.paint = t2 - t1;
+  perf.scanned = 0;
+  perf.history.push(rtt + perf.paint);
+  if (perf.history.length > 80) perf.history.shift();
+  renderHud();
+  renderUrlState();
 }
 
 /* ---------- virtualized list ---------- */
@@ -2344,6 +2907,8 @@ function buildControls() {
   });
 
   buildCalendar();
+  renderLegs();
+  buildLegControls();
 
   priceHist.prime(meta.priceBackdrop);
   durHist.prime(meta.durBackdrop);
@@ -2509,6 +3074,8 @@ function readUrlState() {
   // value for it and show something the sender never saw.
   resetFilterState();
   state.sort = "priceCents";
+  state.mode = "oneway";
+  state.legs = [{ origin: -1, dest: -1, day: 7 }, { origin: -1, dest: -1, day: 14 }];
   if (!hash) return true;
 
   const int36 = (text) => {
@@ -2534,6 +3101,24 @@ function readUrlState() {
       ];
       if (key === "p") state.price = range;
       else state.dur = range;
+    } else if (key === "m") {
+      const legs = body.split("_").map((part) => {
+        const [o, d, day] = part.split(".");
+        const read = (text, max) => {
+          const v = text === "" || text === undefined ? -1 : int36(text);
+          return v !== null && v >= 0 && v < max ? v : -1;
+        };
+        return { origin: read(o, AIRPORTS.length), dest: read(d, AIRPORTS.length), day: read(day, DAYS) };
+      });
+      // Two legs minimum, and no more than the engine will combine.
+      if (legs.length >= 2) {
+        state.legs = legs.slice(0, 4).map((leg, i) => ({
+          ...leg,
+          day: leg.day >= 0 ? leg.day : Math.min(DAYS - 1, 7 * (i + 1)),
+        }));
+        enforceChronology(0);
+      }
+      state.mode = "multi";
     } else if (key === "t") {
       const v = int36(body);
       if (v !== null && v >= 0 && v < DAYS) state.day = v;
@@ -2567,6 +3152,8 @@ function routeLabelText() {
 
 /** Pushes state back out to every control, after a reset or a link restore. */
 function syncControlsFromState() {
+  setMode(state.mode);
+  if (dateLabels.length) renderLegs();
   $("originSelect").value = String(state.origin);
   $("routeLabel").textContent = routeLabelText();
   syncStops();
@@ -2587,6 +3174,10 @@ function renderUrlState() {
   }
   if (state.dur[0] > durDomain[0] || state.dur[1] < durDomain[1]) {
     parts.push("d" + state.dur[0].toString(36) + "-" + state.dur[1].toString(36));
+  }
+  if (state.mode === "multi") {
+    const enc = (v) => (v < 0 ? "" : v.toString(36));
+    parts.push("m" + state.legs.map((l) => [enc(l.origin), enc(l.dest), enc(l.day)].join(".")).join("_"));
   }
   if (state.day >= 0) parts.push("t" + state.day.toString(36));
   if (state.stops.size < 3) parts.push("s" + [...state.stops].sort().join(""));

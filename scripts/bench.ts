@@ -15,6 +15,7 @@ import { applyFilters, createScratch, type Filter } from '../src/core/filter.ts'
 import { argsortColumn } from '../src/core/sort.ts';
 import { histogram } from '../src/core/histogram.ts';
 import { minPerBucket, MINUTES_PER_DAY } from '../src/core/buckets.ts';
+import { topKCombinations, type LegCandidates } from '../src/core/combine.ts';
 import { materializeWindow } from '../src/core/query.ts';
 
 const ROWS = Number(process.argv[2] ?? 1_000_000);
@@ -117,5 +118,37 @@ time('4 filters + grid + histogram + window', 50, () => {
   histogram(prices, r, priceMin, priceMax, 48, bins);
   materializeWindow(orders.priceCents, r.mask, 0, 40);
 });
+
+console.log('\nmulti-city (3 legs, 40 itineraries)');
+const legScratch = [createScratch(ROWS), createScratch(ROWS), createScratch(ROWS)];
+// A real multi-city leg is one route on one day — a few dozen rows out of a
+// million. Benchmarking broad legs hides the cost of finding their cheapest.
+const legSpecs = [[0, 1, 7], [1, 2, 14], [2, 0, 21]].map(([o, d, day]) => [
+  { kind: 'oneOf' as const, column: 'originId', values: [o] },
+  { kind: 'oneOf' as const, column: 'destId', values: [d] },
+  { kind: 'range' as const, column: 'depMin', min: day * 1440, max: (day + 1) * 1440 - 1 },
+]);
+
+const K = 40;
+function runLegs(): LegCandidates[] {
+  return legSpecs.map((filters, i) => {
+    const sel = applyFilters(slab, filters, legScratch[i]);
+    const rows = materializeWindow(orders.priceCents, sel.mask, 0, K);
+    const prices = new Uint32Array(rows.length);
+    for (let r = 0; r < rows.length; r++) prices[r] = slab.columns.priceCents[rows[r]];
+    return { prices, rows, length: rows.length };
+  });
+}
+
+const legsOnce = runLegs();
+const space = legsOnce.reduce((acc, l) => acc * Math.max(1, l.length), 1);
+time('3 leg queries (filter + top 40)', 50, () => { runLegs(); });
+time('combine -> 40 cheapest trips', 50, () => { topKCombinations(legsOnce, K); });
+time('full multi-city frame', 50, () => { topKCombinations(runLegs(), K); });
+const combo = topKCombinations(legsOnce, K);
+console.log(
+  `  legs: ${legsOnce.map((l) => l.length).join(' / ')} candidates, ` +
+  `cheapest trip $${(combo.totals[0] / 100).toFixed(0)}, dearest shown $${(combo.totals[combo.count - 1] / 100).toFixed(0)}`,
+);
 
 console.log(`\nselectivity: ${count.toLocaleString()} / ${ROWS.toLocaleString()} rows (${((count / ROWS) * 100).toFixed(1)}%)\n`);
