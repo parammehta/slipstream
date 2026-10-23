@@ -1,4 +1,4 @@
-<title>A Million Flights, No Server</title>
+<title>Slipstream &mdash; A Million Flights, No Server</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,6 +15,7 @@
   --line: #DBE0E8;
   --line-strong: #C1C8D4;
   --accent: #C0551F;
+  --on-accent: #FFFFFF;
   --steel: #4E7C98;
   --code: #F3F5F9;
 
@@ -35,6 +36,7 @@
     --line: #222935;
     --line-strong: #333C4A;
     --accent: #F0824A;
+    --on-accent: #1B1006;
     --steel: #6D9AB8;
     --code: #161C26;
     color-scheme: dark;
@@ -49,6 +51,7 @@
   --line: #222935;
   --line-strong: #333C4A;
   --accent: #F0824A;
+  --on-accent: #1B1006;
   --steel: #6D9AB8;
   --code: #161C26;
   color-scheme: dark;
@@ -71,6 +74,42 @@ body {
 
 /* Everything shares one left edge; prose is narrow, figures run wider. */
 .page { max-width: var(--wide); margin: 0 auto; }
+
+/* ---------- top bar + calls to action ---------- */
+.topbar {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; padding-block: 1.1rem; border-bottom: 1px solid var(--line);
+}
+.topbar .brand {
+  font-family: var(--display); font-weight: 700; font-size: 1rem;
+  letter-spacing: -0.01em; color: var(--ink);
+}
+.topbar a {
+  font-family: var(--display); font-size: .875rem; font-weight: 600;
+  text-decoration: none;
+}
+.topbar a:hover { text-decoration: underline; }
+
+.cta-row { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2.1rem; }
+.btn {
+  font-family: var(--display); font-size: .9375rem; font-weight: 600;
+  padding: .74rem 1.35rem; border-radius: 7px; text-decoration: none;
+  display: inline-flex; align-items: center; gap: .45rem; border: 1px solid transparent;
+}
+.btn-primary { background: var(--accent); color: var(--on-accent); }
+.btn-primary:hover { filter: brightness(1.06); }
+.btn-ghost { border-color: var(--line-strong); color: var(--ink); }
+.btn-ghost:hover { border-color: var(--muted); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.closing {
+  margin-top: 3rem; padding: 1.9rem 1.6rem; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; gap: 1.2rem 2rem;
+  align-items: center; justify-content: space-between;
+}
+.closing h2 { margin: 0 0 .35rem; max-width: none; font-size: 1.25rem; }
+.closing p { margin: 0; max-width: 32rem; font-size: .9375rem; }
 
 /* ---------- masthead ---------- */
 .masthead { padding-block: 3.5rem 2.5rem; }
@@ -209,8 +248,13 @@ figcaption {
 </style>
 
 <div class="page">
+<nav class="topbar">
+  <span class="brand">Slipstream</span>
+  <a href="/app">Open the search &rarr;</a>
+</nav>
+
 <header class="masthead">
-  <p class="kicker">Slipstream &middot; engine notes</p>
+  <p class="kicker">Flight search &middot; engine notes</p>
   <h1>A Million Flights, No Server</h1>
   <p class="standfirst">
     There is no free flight-pricing API left to call. So I built the search to run
@@ -224,6 +268,11 @@ figcaption {
     <div class="fig"><b>20.0</b><span>Bytes per offer on disk</span></div>
     <div class="fig"><b>0</b><span>Requests while searching</span></div>
     <div class="fig"><b>1,200</b><span>Real markets, real fares</span></div>
+  </div>
+
+  <div class="cta-row">
+    <a class="btn btn-primary" href="/app">Search a million flights &rarr;</a>
+    <a class="btn btn-ghost" href="https://github.com/parammehta/slipstream">Read the source</a>
   </div>
 </header>
 
@@ -562,13 +611,24 @@ figcaption {
     While you use it, it makes no network requests at all.
   </p>
 
+  <div class="closing">
+    <div>
+      <h2>Try it on real fares</h2>
+      <p>
+        Half a million offers over 1,200 US markets, filtered and sorted in the browser.
+        Drag the price slider and watch the distribution redraw under your cursor.
+      </p>
+    </div>
+    <a class="btn btn-primary" href="/app">Open the search &rarr;</a>
+  </div>
+
   <div class="end">
     <p>
       Built by Param Mehta. The engine, the harvester and this write-up are in the repository;
-      the demo runs the real thing on real fares.
+      the search runs the real thing on real fares.
     </p>
     <div class="links">
-      <a href="https://slipstream-search.vercel.app">Live demo</a>
+      <a href="/app">The search</a>
       <a href="https://github.com/parammehta/slipstream">Source</a>
     </div>
   </div>

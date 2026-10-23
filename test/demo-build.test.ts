@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { renderDemo, BUNDLE, EXCLUDED_FROM_BUNDLE } from '../scripts/build-demo.ts';
 
-const committed = readFileSync(new URL('../demo/index.html', import.meta.url), 'utf8');
+const committed = readFileSync(new URL('../demo/app/index.html', import.meta.url), 'utf8');
 
 /**
  * Symbols the bundle must declare. The page no longer reaches into the engine
@@ -16,11 +16,11 @@ const REQUIRED = [
   'generateOffersFromMarkets', 'marketDataset',
 ];
 
-test('demo/index.html is in sync with src/core', () => {
+test('demo/app/index.html is in sync with src/core', () => {
   assert.equal(
     committed,
     renderDemo(),
-    'demo/index.html is stale — run: npm run build:demo',
+    'demo/app/index.html is stale — run: npm run build:demo',
   );
 });
 

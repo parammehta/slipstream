@@ -14,13 +14,16 @@
  * instead of writing it; the test suite uses that to catch drift.
  */
 import { stripTypeScriptTypes } from 'node:module';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATE = join(ROOT, 'demo/index.template.html');
-const OUTPUT = join(ROOT, 'demo/index.html');
+/** The app moved to /app so that / can be the landing page. */
+const OUTPUT = join(ROOT, 'demo/app/index.html');
+const LANDING_SOURCE = join(ROOT, 'demo/landing.template.html');
+const LANDING_OUTPUT = join(ROOT, 'demo/index.html');
 const MARKER = '<!--@ENGINE@-->';
 
 /**
@@ -175,17 +178,31 @@ export function renderDemo(): string {
   return template.replace(MARKER, buildEngine());
 }
 
+/** The landing page is static; the build only copies it into the output. */
+export function renderLanding(): string {
+  return readFileSync(LANDING_SOURCE, 'utf8');
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const rendered = renderDemo();
+  const app = renderDemo();
+  const landing = renderLanding();
+
   if (process.argv.includes('--check')) {
-    const current = readFileSync(OUTPUT, 'utf8');
-    if (current !== rendered) {
-      console.error('demo/index.html is stale — run: npm run build:demo');
+    const stale: string[] = [];
+    if (readFileSync(OUTPUT, 'utf8') !== app) stale.push('demo/app/index.html');
+    if (readFileSync(LANDING_OUTPUT, 'utf8') !== landing) stale.push('demo/index.html');
+    if (stale.length) {
+      console.error(`${stale.join(' and ')} stale — run: npm run build:demo`);
       process.exit(1);
     }
-    console.log('demo/index.html is up to date');
+    console.log('demo output is up to date');
   } else {
-    writeFileSync(OUTPUT, rendered);
-    console.log(`wrote demo/index.html (${rendered.length.toLocaleString()} bytes)`);
+    mkdirSync(dirname(OUTPUT), { recursive: true });
+    writeFileSync(OUTPUT, app);
+    writeFileSync(LANDING_OUTPUT, landing);
+    console.log(
+      `wrote demo/app/index.html (${app.length.toLocaleString()} bytes)\n` +
+      `wrote demo/index.html (${landing.length.toLocaleString()} bytes)`,
+    );
   }
 }
