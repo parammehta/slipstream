@@ -248,7 +248,7 @@ Query-string switches:
 Requires Node 24+ (native TypeScript stripping, `node:test`). No install step.
 
 ```bash
-npm test               # 137 tests, including the demo staleness check
+npm test               # 125 tests, including the demo staleness check
 npm run bench          # or: node scripts/bench.ts 5000000
 npm run build:demo     # regenerate demo/index.html from src/core
 npm run check:demo     # verify it is current without writing
