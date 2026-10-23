@@ -4,11 +4,16 @@ Flight search where the interesting part is the search UX, not the booking flow.
 
 **[Live demo →](https://slipstream-search.vercel.app)**
 
-Free flight APIs are rate-limited to hundreds of calls a day, so there is no
-querying a provider per keystroke. Slipstream inverts it: prices are harvested
-on a schedule into a columnar binary **slab**, the client downloads one slab,
-and every filter, sort, and histogram runs locally over typed arrays. Nothing
-touches the network during interaction.
+There is no free flight-pricing API to call per keystroke. The ones that
+existed were rate-limited to hundreds of calls a day, and Amadeus — the last
+one with an open self-service tier — decommissioned it on 17 July 2026,
+leaving enterprise contracts and paid scrapers. Fare data is something you
+acquire in bulk, offline.
+
+So Slipstream is built that way round: fares are harvested on a schedule into
+a columnar binary **slab**, the client downloads one slab, and every filter,
+sort, and histogram runs locally over typed arrays. Nothing touches the
+network during interaction.
 
 ## Status
 
@@ -203,8 +208,9 @@ npm run check:demo     # verify it is current without writing
 2. ~~Results UI: virtualized list, live histogram sliders, frame-timing overlay~~ — done
 3. ~~Generate the demo from `src/core` so the engine has one source of truth~~ — done
 4. ~~Flexible-date price grid: cheapest fare per day, filterable~~ — done
-5. Harvester: real *fares*. Real routes are in (see [The data](#the-data));
-   live pricing still needs an Amadeus Self-Service key.
+5. Harvester: real *fares*. Real routes are in (see [The data](#the-data)).
+   The intended source is the US DOT's DB1B ticket sample — actual fares
+   paid, published in bulk, no account required.
 6. ~~Worker wrapper: move the engine off the main thread~~ — done
 7. Multi-city legs
 8. ~~URL state: read the hash back on load, not just write it~~ — done
