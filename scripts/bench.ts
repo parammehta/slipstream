@@ -9,7 +9,8 @@
  */
 import { encodeSlab } from '../src/core/encode.ts';
 import { decodeSlab } from '../src/core/decode.ts';
-import { generateOffers } from '../src/core/synth.ts';
+import { generateOffersFromMarkets } from '../src/core/offers.ts';
+import { marketDataset } from '../src/core/markets.ts';
 import { applyFilters, createScratch, type Filter } from '../src/core/filter.ts';
 import { argsortColumn } from '../src/core/sort.ts';
 import { histogram } from '../src/core/histogram.ts';
@@ -33,11 +34,15 @@ function time(label: string, runs: number, fn: () => void): number {
   return p50;
 }
 
-console.log(`\nslipstream engine bench — ${ROWS.toLocaleString()} rows\n`);
+const dataset = marketDataset();
+console.log(
+  `\nslipstream engine bench — ${ROWS.toLocaleString()} rows over ` +
+  `${dataset.markets.length.toLocaleString()} harvested markets (${dataset.period})\n`,
+);
 
 console.log('build');
 const t0 = performance.now();
-const input = generateOffers(ROWS, 1);
+const input = generateOffersFromMarkets(dataset, ROWS, 1);
 console.log(`  generate                           ${(performance.now() - t0).toFixed(0)}ms`);
 
 const t1 = performance.now();

@@ -26,16 +26,17 @@ Apple Silicon, Node 24, `npm run bench`:
 
 | Operation | p50 | p95 |
 | --- | ---: | ---: |
-| 1 filter (slider drag) | 2.64ms | 2.70ms |
-| 4 filters (typical query) | 5.71ms | 5.75ms |
-| Histogram, 48 bins | 0.18ms | 0.18ms |
-| Date grid, 60 day buckets | 0.20ms | 0.20ms |
-| Window of 40 rows | 0.47ms | 0.50ms |
-| **Full frame** (filter + grid + histogram + window) | **6.68ms** | **6.71ms** |
+| 1 filter (slider drag) | 2.43ms | 2.49ms |
+| 4 filters (typical query) | 6.99ms | 7.16ms |
+| Histogram, 48 bins | 0.60ms | 0.61ms |
+| Date grid, 60 day buckets | 0.66ms | 0.67ms |
+| Window of 40 rows | 0.53ms | 0.54ms |
+| **Full frame** (filter + grid + histogram + window) | **8.79ms** | **8.87ms** |
 
-Selectivity for that query is 7.3%; the earlier 9.80ms figure was measured
-against a synthetic route set whose filters kept 22% of rows, so less of the
-work got skipped.
+Measured over the harvested dataset rather than a synthetic one, so the
+numbers reflect the distributions the product actually queries. Selectivity
+for that query is 25.1% — real fare curves cluster, so filters keep more rows
+and less work gets skipped than synthetic data suggested.
 
 Inside a 16ms frame, so the price slider can re-filter and redraw its own
 distribution on every pointer move rather than on commit.
