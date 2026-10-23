@@ -2,6 +2,8 @@
 
 Flight search where the interesting part is the search UX, not the booking flow.
 
+**[Live demo →](https://slipstream-umber-beta.vercel.app)**
+
 Free flight APIs are rate-limited to hundreds of calls a day, so there is no
 querying a provider per keystroke. Slipstream inverts it: prices are harvested
 on a schedule into a columnar binary **slab**, the client downloads one slab,
