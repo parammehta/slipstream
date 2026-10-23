@@ -65,13 +65,20 @@ export function generateOffers(rowCount: number, seed = 1): SlabInput {
     const r = (rand() * routes.length) | 0;
     const km = routeKm[r];
 
-    // Long flights are likelier to be sold with a connection.
-    const stopBias = km > 6000 ? 0.3 : km > 2000 ? 0.45 : 0.62;
-    const stopCount = rand() < stopBias ? 0 : rand() < 0.82 ? 1 : 2;
+    // Connections scale with distance. Nobody sells a two-stop itinerary for
+    // a 45-minute hop, so short routes are almost always nonstop and can
+    // never pick up a second connection.
+    const nonstopChance =
+      km < 700 ? 0.97 : km < 1500 ? 0.88 : km < 3000 ? 0.7 : km < 6000 ? 0.5 : 0.33;
+    const stopCount =
+      rand() < nonstopChance ? 0 : km > 3000 && rand() > 0.72 ? 2 : 1;
 
     const nonstopMinutes = GROUND_MINUTES + (km / CRUISE_KMH) * 60;
-    // Each connection adds a layover plus the detour it implies.
-    const connection = stopCount * (70 + rand() * 150) + stopCount * nonstopMinutes * 0.18;
+    // Each connection adds a layover plus the detour it implies. The layover
+    // scales with distance: short-haul connections run through a nearby hub
+    // and turn around quickly, long-haul ones wait for a bank.
+    const layover = 55 + rand() * (55 + km / 80);
+    const connection = stopCount * layover + stopCount * nonstopMinutes * 0.18;
     const duration = Math.min(65535, Math.round(nonstopMinutes + connection));
 
     const day = (rand() * DAYS) | 0;
