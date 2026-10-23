@@ -379,7 +379,7 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
     <div class="brand"><b>Slipstream</b> <span>Engine demo</span></div>
     <div class="route">
       <div class="pair mono" id="routeLabel">All origins</div>
-      <div class="meta">60-day window · <span class="mono" id="totalRows">500,000</span> offers over <span class="mono" id="routeCount">real</span> routes</div>
+      <div class="meta">60-day window · <span class="mono" id="totalRows">500,000</span> offers · <span class="mono" id="routeCount">real</span> markets · <span id="dataPeriod">DOT DB1B</span></div>
     </div>
     <div class="spacer"></div>
     <div class="sorts" role="group" aria-label="Sort results">
@@ -616,7 +616,12 @@ function boot() {
     $("engineMode").textContent = engineMode === "worker" ? "worker" : "main thread";
     $("boot").classList.add("done");
     $("totalRows").textContent = ROWS.toLocaleString();
-    if (meta && meta.routeCount) $("routeCount").textContent = meta.routeCount.toLocaleString();
+    if (meta && meta.marketCount) $("routeCount").textContent = meta.marketCount.toLocaleString();
+    if (meta && meta.period) {
+      const el = $("dataPeriod");
+      el.textContent = "DOT DB1B " + meta.period;
+      el.title = meta.attribution || "";
+    }
   };
 }
 
@@ -1417,7 +1422,7 @@ function readUrlState() {
 
 /** Describes the current origin against the real size of the route set. */
 function routeLabelText() {
-  if (state.origin < 0) return "All origins \u2192 " + AIRPORTS.length + " airports";
+  if (state.origin < 0) return "All US origins \u2192 " + AIRPORTS.length + " airports";
   const city = (meta.dicts.cities || [])[state.origin];
   return AIRPORTS[state.origin] + (city ? " " + city : "") + " \u2192 onward";
 }

@@ -1,14 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { renderDemo } from '../scripts/build-demo.ts';
+import { renderDemo, BUNDLE, EXCLUDED_FROM_BUNDLE } from '../scripts/build-demo.ts';
 
 const committed = readFileSync(new URL('../demo/index.html', import.meta.url), 'utf8');
 
-/** Symbols the UI script pulls out of the inlined engine. */
+/**
+ * Symbols the bundle must declare. The page no longer reaches into the engine
+ * directly — it talks to `handleMessage` over postMessage and reads airports
+ * and carriers out of the ready payload — so this is the engine's own surface.
+ */
 const REQUIRED = [
-  'AIRPORTS', 'CARRIERS', 'generateOffers', 'encodeSlab', 'decodeSlab',
-  'createScratch', 'applyFilters', 'argsortColumn', 'histogram', 'materializeWindow',
+  'handleMessage', 'encodeSlab', 'decodeSlab', 'createScratch', 'applyFilters',
+  'argsortColumn', 'histogram', 'materializeWindow', 'minPerBucket',
+  'generateOffersFromMarkets', 'marketDataset',
 ];
 
 test('demo/index.html is in sync with src/core', () => {
@@ -19,7 +24,7 @@ test('demo/index.html is in sync with src/core', () => {
   );
 });
 
-test('the generated engine declares everything the UI uses', () => {
+test('the generated engine declares its full surface', () => {
   for (const sym of REQUIRED) {
     const declared = new RegExp(`^(?:function|const|let)\\s+${sym}\\b`, 'm');
     assert.ok(declared.test(committed), `engine never declares ${sym}`);
@@ -44,9 +49,21 @@ test('every core module is inlined', () => {
     .filter((f) => f.endsWith('.ts') && f !== 'index.ts');
 
   assert.ok(modules.length >= 9, `only found ${modules.length} core modules`);
+
+  const bundled = new Set(BUNDLE.filter((b) => b.dir === 'src/core').map((b) => b.file));
+  const excluded = new Set(EXCLUDED_FROM_BUNDLE);
   for (const file of modules) {
-    assert.ok(committed.includes(`/* ---- src/core/${file} ---- */`), `${file} missing from the demo`);
+    assert.ok(
+      bundled.has(file) || excluded.has(file),
+      `src/core/${file} is neither bundled nor explicitly excluded`,
+    );
+    if (bundled.has(file)) {
+      assert.ok(committed.includes(`/* ---- src/core/${file} ---- */`), `${file} missing from the demo`);
+    }
   }
+  // The worker and the harvest helpers it leans on must travel too.
+  assert.ok(committed.includes('/* ---- src/worker/engine-worker.ts ---- */'), 'worker missing');
+  assert.ok(committed.includes('/* ---- src/harvest/distribution.ts ---- */'), 'distribution missing');
 });
 
 test('the generated block warns against editing it', () => {

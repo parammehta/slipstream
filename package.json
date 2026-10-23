@@ -13,5 +13,9 @@
     "check:demo": "node --disable-warning=ExperimentalWarning scripts/build-demo.ts --check",
     "bench": "node scripts/bench.ts",
     "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
   }
 }

@@ -27,22 +27,37 @@ const MARKER = '<!--@ENGINE@-->';
  * Dependency order, since the output is one flat classic script rather than a
  * module graph. `index.ts` is skipped — it only re-exports.
  */
-const CORE_MODULES = [
-  'format.ts',
-  'routes.ts',
-  'encode.ts',
-  'decode.ts',
-  'bitset.ts',
-  'filter.ts',
-  'buckets.ts',
-  'sort.ts',
-  'histogram.ts',
-  'query.ts',
-  'synth.ts',
+/**
+ * Dependency order for the flattened bundle. Spans directories because the
+ * offer generator samples fare curves, which live with the harvester.
+ */
+export const BUNDLE: ReadonlyArray<{ dir: string; file: string }> = [
+  { dir: 'src/core', file: 'format.ts' },
+  { dir: 'src/core', file: 'encode.ts' },
+  { dir: 'src/core', file: 'decode.ts' },
+  { dir: 'src/core', file: 'bitset.ts' },
+  { dir: 'src/core', file: 'filter.ts' },
+  { dir: 'src/core', file: 'buckets.ts' },
+  { dir: 'src/core', file: 'sort.ts' },
+  { dir: 'src/core', file: 'histogram.ts' },
+  { dir: 'src/core', file: 'query.ts' },
+  { dir: 'src/harvest', file: 'distribution.ts' },
+  { dir: 'src/core', file: 'market-data.ts' },
+  { dir: 'src/core', file: 'markets.ts' },
+  { dir: 'src/core', file: 'offers.ts' },
+  { dir: 'src/worker', file: 'engine-worker.ts' },
 ];
 
-/** Appended after the core modules; drives the query path over postMessage. */
-const WORKER_MODULES = ['engine-worker.ts'];
+/**
+ * Core modules deliberately left out of the demo. The demo generates offers
+ * from the harvested fare dataset, so the OpenFlights route table and the
+ * model that rides on it are only used by the benchmark and the tests —
+ * inlining them would add ~46KB the page never executes.
+ *
+ * Listed explicitly so that forgetting a *new* module still fails the build
+ * rather than silently shipping a broken page.
+ */
+export const EXCLUDED_FROM_BUNDLE: ReadonlyArray<string> = ['index.ts', 'routes.ts', 'synth.ts'];
 
 /**
  * Wires the flattened bundle up to whichever host it finds itself in: a real
@@ -95,15 +110,13 @@ function flatten(source: string): string {
 }
 
 function buildEngine(): string {
-  const parts = [
-    ...CORE_MODULES.map((file) => ({ dir: 'src/core', file })),
-    ...WORKER_MODULES.map((file) => ({ dir: 'src/worker', file })),
-  ].map(({ dir, file }) => {
+  const parts = BUNDLE.map(({ dir, file }) => {
     const source = readFileSync(join(ROOT, dir, file), 'utf8');
     return `/* ---- ${dir}/${file} ---- */\n${flatten(source)}`;
   });
 
   const bundle = ['"use strict";', parts.join('\n\n'), MESSAGE_LOOP].join('\n\n');
+  assertNoDuplicateDeclarations(bundle);
 
   // The bundle is carried as inert text and handed to a Blob worker, so a
   // literal </script> anywhere inside it would close the tag early.
@@ -126,6 +139,31 @@ function buildEngine(): string {
     escaped,
     '</script>',
   ].join('\n');
+}
+
+/**
+ * Flattening puts every module in one scope, so two modules declaring the
+ * same top-level name produce a page that dies on load with
+ * "Identifier X has already been declared". Catch it at build time.
+ */
+function assertNoDuplicateDeclarations(bundle: string): void {
+  const seen = new Map<string, number>();
+  const duplicates: string[] = [];
+  const pattern = /^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm;
+
+  for (const match of bundle.matchAll(pattern)) {
+    const name = match[1];
+    const count = (seen.get(name) ?? 0) + 1;
+    seen.set(name, count);
+    if (count === 2) duplicates.push(name);
+  }
+
+  if (duplicates.length) {
+    throw new Error(
+      `build-demo: ${duplicates.length} name(s) declared twice in the flattened ` +
+      `bundle: ${duplicates.join(', ')}. Rename one of them — the bundle is a single scope.`,
+    );
+  }
 }
 
 export function renderDemo(): string {

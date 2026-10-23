@@ -118,8 +118,16 @@ src/core/
   histogram.ts   binning over the current selection
   query.ts       windowed materialization for the virtual list
   bitset.ts      membership bitsets
-  routes.ts      GENERATED — real airports, airlines and routes
-  synth.ts       seeded offers over those real routes
+  markets.ts     GENERATED — harvested markets and their fare curves
+  offers.ts      offers sampled from real fare curves
+  routes.ts      GENERATED — OpenFlights routes, used by the benchmark
+  synth.ts       seeded offers over those routes, for tests and benchmarks
+src/harvest/
+  provider.ts    the fare-source interface
+  db1b.ts        US DOT DB1B, streaming and two-pass
+  distribution.ts  fare curves as quantiles
+  market.ts      observations -> markets
+  emit.ts        markets -> generated module
 src/worker/
   engine-worker.ts     owns the slab; answers queries over postMessage
 demo/
@@ -134,33 +142,61 @@ or in Node.
 
 ## The data
 
-Fares are generated, but the geography is not. `src/core/routes.ts` is built
-from the [OpenFlights](https://openflights.org/data.html) database: **138
-airports, 32 airlines and 4,564 routes that genuinely exist between them**,
-with real coordinates.
+**The fares are real.** `src/core/markets.ts` is harvested from the US DOT's
+[Airline Origin and Destination Survey (DB1B)](https://www.transtats.bts.gov/):
+a 10% sample of tickets sold by US reporting carriers, published quarterly, in
+the public domain. No account, no key, no rate limit.
 
-That matters because duration falls out of great-circle distance rather than
-being invented. Checked against published schedules:
+From 2025 Q1 — 1.7GB of ticket records, 65,100 directional markets — the
+harvester keeps the busiest **1,200 markets across 90 airports and 31
+carriers**, each carrying its observed fare curve (p10..p90) rather than a
+formula. What comes out is recognisably the real market:
 
-| | generated | real | |
-| --- | ---: | ---: | ---: |
-| SIN–HKG | 232m | ~230m | 1% |
-| SFO–LHR | 686m | ~640m | 7% |
-| JFK–LAX | 338m | ~375m | 10% |
-| LHR–CDG | 66m | ~75m | 12% |
+| | distance | p10 | median | p90 | carriers |
+| --- | ---: | ---: | ---: | ---: | --- |
+| LAX→JFK | 2,475mi | $148 | $293 | $1,103 | DL 44%, B6 35%, AA 19% |
+| LGA→ORD | 733mi | $73 | $153 | $308 | UA 33%, AA 27%, YX 14% |
+| LAX→HNL | 2,556mi | $123 | $198 | $408 | HA 38%, UA 22%, DL 16% |
 
-Carriers are drawn from a per-route bitmask of airlines that actually fly it,
-so BA appears on LHR–JFK, AI on BOM–DEL, and nobody flies a route they do not
-serve — the generator asserts zero violations across 300,000 offers.
+JetBlue and Delta splitting the JFK transcon, a $1,103 p90 where the premium
+cabins sit, Hawaiian leading Los Angeles–Honolulu, Republic flying regional
+for the majors out of LaGuardia — none of that is modelled. It is what was
+sold.
 
-Two things the curation has to get right, both learned the hard way:
-codeshare rows are excluded (otherwise United "serves" Dubai–Doha), and
-airlines are picked *before* airports, because choosing airports first leaves
-pairs like Mumbai and Delhi in the set with no route between them. The
-generator refuses to emit an airport with no routes.
+**What is modelled: departure times.** DB1B records what was paid and how far
+the passenger flew, never when they left. So schedules are generated —
+duration from distance, connection likelihood from each market's *observed*
+connecting share, block times jittered because real aircraft differ. Fares,
+routes, carriers and carrier mix come from the data; clocks do not.
 
-Refresh it with `node scripts/fetch-routes.ts`; the output is committed, so
-builds and tests never touch the network.
+Two filters matter more than they look. Bulk fares (`BulkFare > 0`) are
+tour-operator inventory rather than what a passenger paid, and fares under $20
+are award tickets, employee travel and keypunch errors — both drag the curve
+down and both are excluded.
+
+City names come from [OpenFlights](https://openflights.org/data.html), which
+DB1B does not carry.
+
+### Re-harvesting
+
+The download is ~90MB compressed and 1.7GB extracted, so it is deliberately
+not part of any build:
+
+```bash
+curl -L -o db1b.zip \
+  https://transtats.bts.gov/PREZIP/Origin_and_Destination_Survey_DB1BMarket_2025_1.zip
+unzip db1b.zip
+node scripts/harvest.ts --csv Origin_and_Destination_Survey_DB1BMarket_2025_1.csv \
+  --period "2025 Q1" --limit 1200
+```
+
+Two streaming passes, ~25s: one to rank markets by traffic, one to build fare
+curves for the survivors. Holding every fare in memory would take gigabytes; a
+histogram per market takes a few megabytes.
+
+`src/harvest/provider.ts` is an interface, not a shape fitted to DB1B — a
+second source (an affiliate fare feed, say) implements `run()` and everything
+downstream is shared.
 
 ## The demo
 
@@ -196,11 +232,16 @@ Query-string switches:
 Requires Node 24+ (native TypeScript stripping, `node:test`). No install step.
 
 ```bash
-npm test               # 56 tests, including the demo staleness check
+npm test               # 100 tests, including the demo staleness check
 npm run bench          # or: node scripts/bench.ts 5000000
 npm run build:demo     # regenerate demo/index.html from src/core
 npm run check:demo     # verify it is current without writing
 ```
+
+`npm test` and `npm run bench` need no dependencies. `npm run typecheck` does
+(`npm install` first) — and it earns its keep: `erasableSyntaxOnly` catches
+TypeScript that Node's type stripping cannot erase, which is otherwise only
+discovered at runtime.
 
 ## Roadmap
 
@@ -208,9 +249,7 @@ npm run check:demo     # verify it is current without writing
 2. ~~Results UI: virtualized list, live histogram sliders, frame-timing overlay~~ — done
 3. ~~Generate the demo from `src/core` so the engine has one source of truth~~ — done
 4. ~~Flexible-date price grid: cheapest fare per day, filterable~~ — done
-5. Harvester: real *fares*. Real routes are in (see [The data](#the-data)).
-   The intended source is the US DOT's DB1B ticket sample — actual fares
-   paid, published in bulk, no account required.
+5. ~~Harvester: real fares from the US DOT DB1B ticket sample~~ — done
 6. ~~Worker wrapper: move the engine off the main thread~~ — done
 7. Multi-city legs
 8. ~~URL state: read the hash back on load, not just write it~~ — done
@@ -230,5 +269,8 @@ npm run check:demo     # verify it is current without writing
 
 Code: MIT.
 
-Route data derives from the OpenFlights database, which is published under the
-[Open Database License](https://opendatacommons.org/licenses/odbl/1-0/).
+Fare data: US Department of Transportation, Bureau of Transportation
+Statistics, Airline Origin and Destination Survey (DB1B). Public domain.
+
+Airport and city data derives from the OpenFlights database, published under
+the [Open Database License](https://opendatacommons.org/licenses/odbl/1-0/).

@@ -1,12 +1,12 @@
 import { encodeSlab } from '../core/encode.ts';
 import { decodeSlab } from '../core/decode.ts';
-import { generateOffers } from '../core/synth.ts';
+import { generateOffersFromMarkets } from '../core/offers.ts';
+import { marketDataset } from '../core/markets.ts';
 import { applyFilters, refineSelection, createScratch, type Filter, type Selection } from '../core/filter.ts';
 import { argsortColumn } from '../core/sort.ts';
 import { histogram } from '../core/histogram.ts';
 import { materializeWindow } from '../core/query.ts';
 import { minPerBucket, valueExtent, MINUTES_PER_DAY, NO_VALUE } from '../core/buckets.ts';
-import { routeTable } from '../core/routes.ts';
 import type { Slab } from '../core/format.ts';
 
 /**
@@ -46,7 +46,8 @@ function percentile(column: { [i: number]: number }, order: Uint32Array, p: numb
 
 function init(rowCount: number, seed: number) {
   const t0 = performance.now();
-  const buf = encodeSlab(generateOffers(rowCount, seed));
+  const dataset = marketDataset();
+  const buf = encodeSlab(generateOffersFromMarkets(dataset, rowCount, seed));
   const built = performance.now();
 
   slab = decodeSlab(buf);
@@ -86,7 +87,9 @@ function init(rowCount: number, seed: number) {
     days: DAY_BUCKETS,
     bins: HIST_BINS,
     rowFields: ROW_FIELDS,
-    routeCount: routeTable().length,
+    marketCount: marketDataset().markets.length,
+    period: marketDataset().period,
+    attribution: marketDataset().attribution,
     priceDomain,
     durDomain,
     priceBackdrop,
@@ -183,7 +186,10 @@ function windowOnly(msg: { offset: number; limit: number }) {
   };
 }
 
-export function handleMessage(msg: any): { reply: any; transfer: ArrayBuffer[] } {
+// ArrayBufferLike, not ArrayBuffer: a typed array's `.buffer` may be a
+// SharedArrayBuffer as far as the type system knows, and postMessage accepts
+// either.
+export function handleMessage(msg: any): { reply: any; transfer: ArrayBufferLike[] } {
   if (msg.type === 'ping') {
     // Proves the bundle loaded and is executing. Sent before `init` so the
     // page can tell "worker is broken" from "worker is busy building", which
