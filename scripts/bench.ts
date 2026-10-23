@@ -13,6 +13,7 @@ import { generateOffers } from '../src/core/synth.ts';
 import { applyFilters, createScratch, type Filter } from '../src/core/filter.ts';
 import { argsortColumn } from '../src/core/sort.ts';
 import { histogram } from '../src/core/histogram.ts';
+import { minPerBucket, MINUTES_PER_DAY } from '../src/core/buckets.ts';
 import { materializeWindow } from '../src/core/query.ts';
 
 const ROWS = Number(process.argv[2] ?? 1_000_000);
@@ -97,9 +98,17 @@ time('window 40 rows @ offset 5000', 50, () => {
   materializeWindow(orders.priceCents, mask, 5000, 40);
 });
 
-console.log('\nfull frame budget (filter + histogram + window)');
-time('4 filters + histogram + window', 50, () => {
+const DAY_BUCKETS = 60;
+const grid = new Uint32Array(DAY_BUCKETS);
+const dep = slab.columns.depMin;
+time('date grid (60 day buckets)', 50, () => {
+  minPerBucket(prices, dep, MINUTES_PER_DAY, DAY_BUCKETS, selection, grid);
+});
+
+console.log('\nfull frame budget (filter + grid + histogram + window)');
+time('4 filters + grid + histogram + window', 50, () => {
   const r = applyFilters(slab, realistic, scratch);
+  minPerBucket(prices, dep, MINUTES_PER_DAY, DAY_BUCKETS, r, grid);
   histogram(prices, r, priceMin, priceMax, 48, bins);
   materializeWindow(orders.priceCents, r.mask, 0, 40);
 });

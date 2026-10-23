@@ -74,6 +74,46 @@ export function applyFilters(slab: Slab, filters: Filter[], scratch?: FilterScra
   return { rows: src, count, mask, scanned };
 }
 
+/**
+ * Apply further predicates to an existing selection.
+ *
+ * The date grid needs the cheapest fare per day *ignoring* the date filter,
+ * otherwise picking a day would blank every other day. Rather than run the
+ * whole query twice, build the selection without the date predicate, read the
+ * grid off it, then refine that same selection by the date — one narrow pass
+ * over rows that already survived everything else.
+ *
+ * `scratch` must not be the scratch holding `base.rows`.
+ */
+export function refineSelection(
+  slab: Slab,
+  filters: Filter[],
+  base: Selection,
+  scratch: FilterScratch,
+): Selection {
+  let src = base.rows;
+  let dst = scratch.a;
+  let count = base.count;
+  let scanned = 0;
+
+  for (const f of filters) {
+    if (count === 0) break;
+    scanned += count;
+    count = narrow(slab, f, src, count, dst);
+    src = dst;
+    dst = dst === scratch.a ? scratch.b : scratch.a;
+  }
+
+  const mask = scratch.mask;
+  mask.fill(0);
+  for (let i = 0; i < count; i++) {
+    const row = src[i];
+    mask[row >>> 5] |= (1 << (row & 31)) >>> 0;
+  }
+
+  return { rows: src, count, mask, scanned: base.scanned + scanned };
+}
+
 /** Scan every row once, writing survivors into `out`. */
 function firstPass(slab: Slab, f: Filter, out: Uint32Array, n: number): number {
   const col = column(slab, f);

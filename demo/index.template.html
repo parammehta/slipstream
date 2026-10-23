@@ -195,6 +195,38 @@ body {
 .carrier .code { font-weight: 600; letter-spacing: .03em; }
 .carrier .n { margin-left: auto; color: var(--muted); font-size: 11px; }
 
+/* departure-date grid: colour encodes the cheapest fare that day */
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.cal .dow {
+  font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); text-align: center; font-weight: 700; padding-bottom: 2px;
+}
+.day {
+  appearance: none; cursor: pointer; font: inherit; color: var(--ink);
+  border: 1px solid transparent; border-radius: 5px;
+  padding: 4px 0 3px; line-height: 1.15;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  background: var(--surface-2);
+}
+.day .d { font-size: 11px; font-weight: 600; }
+.day .p { font-size: 9px; font-weight: 500; }
+.day:hover:not(:disabled) { border-color: var(--accent); }
+.day[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.day:disabled { cursor: default; background: transparent; color: var(--muted); }
+.day:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.day.pad { visibility: hidden; }
+.cal-legend {
+  display: flex; align-items: center; gap: 7px; margin-top: 10px;
+  font-size: 9px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); font-weight: 600;
+}
+.cal-legend i {
+  flex: 1; height: 5px; border-radius: 3px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent) 58%, var(--surface)),
+    color-mix(in srgb, var(--accent) 10%, var(--surface)));
+}
+
 select.origin {
   width: 100%; font: inherit; font-size: 13px; padding: 7px 9px;
   border: 1px solid var(--line-strong); border-radius: 6px;
@@ -359,6 +391,12 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
   <div class="body">
     <aside class="rail">
       <div class="group">
+        <h2>Departure date <em class="mono" id="dateLabel">any date</em></h2>
+        <div class="cal" id="cal"></div>
+        <div class="cal-legend"><span>cheapest</span><i></i><span>priciest</span></div>
+      </div>
+
+      <div class="group">
         <h2>Origin</h2>
         <select class="origin" id="originSelect" aria-label="Origin airport"></select>
       </div>
@@ -447,10 +485,15 @@ const ROW_H = 72;
 const BINS = 64;
 const $ = (id) => document.getElementById(id);
 
-let slab, orders, scratch, selection;
+const DAYS = 60; // the synthetic shopping window
+
+let slab, orders, scratch, scratchB, selection;
 let priceDomain, durDomain;
+let gridMins = new Uint32Array(DAYS);
+const dayCells = [];
 const state = {
   origin: -1,
+  day: -1,
   price: [0, 0],
   dur: [0, 0],
   stops: new Set([0, 1, 2]),
@@ -461,6 +504,7 @@ const state = {
 const perf = { query: 0, paint: 0, scanned: 0, history: [] };
 let isDragging = false;
 let dateLabels = [];
+let dayNumbers = [];
 
 /* ---------- boot ---------- */
 function boot() {
@@ -480,6 +524,8 @@ function boot() {
     .then(() => step("decoding slab…", () => {
       slab = decodeSlab(buf);
       scratch = createScratch(slab.rowCount);
+      // A second set of buffers: refineSelection reads one and writes the other.
+      scratchB = createScratch(slab.rowCount);
     }))
     .then(() => step("building sort orders…", () => {
       orders = {
@@ -519,7 +565,9 @@ function buildDateLabels() {
     weekday: "short", day: "numeric", month: "short", timeZone: "UTC",
   });
   for (let day = 0; day < 70; day++) {
-    dateLabels.push(fmt.format(new Date((slab.baseDayEpoch + day) * 86400000)));
+    const date = new Date((slab.baseDayEpoch + day) * 86400000);
+    dateLabels.push(fmt.format(date));
+    dayNumbers.push(date.getUTCDate());
   }
 }
 
@@ -531,8 +579,24 @@ const clock = (min) => {
 };
 const hoursMins = (min) => (min >= 60 ? ((min / 60) | 0) + "h " : "") + (min % 60) + "m";
 const stopLabel = (n) => (n === 0 ? "Nonstop" : n === 1 ? "1 stop" : n + " stops");
+/** Fits a fare into a ~36px calendar cell. */
+const compactMoney = (cents) => {
+  const d = cents / 100;
+  return d >= 1000 ? (d / 1000).toFixed(1) + "k" : "$" + Math.round(d);
+};
 
 /* ---------- query ---------- */
+/** Restricts to a single departure day. */
+function dayFilter(day) {
+  return {
+    kind: "range",
+    column: "depMin",
+    min: day * MINUTES_PER_DAY,
+    max: (day + 1) * MINUTES_PER_DAY - 1,
+  };
+}
+
+/** Every filter except the date — the grid is computed from these. */
 function buildFilters() {
   const f = [];
   // Most selective first: each later predicate only re-checks survivors.
@@ -554,7 +618,17 @@ function buildFilters() {
 
 function runQuery() {
   const t0 = performance.now();
-  selection = applyFilters(slab, buildFilters(), scratch);
+
+  // The date grid has to ignore the date filter, or picking a day would blank
+  // every other day. So: filter without it, read the grid off that selection,
+  // then refine the same selection by the chosen day.
+  const base = applyFilters(slab, buildFilters(), scratch);
+  gridMins = minPerBucket(
+    slab.columns.priceCents, slab.columns.depMin,
+    MINUTES_PER_DAY, DAYS, base, gridMins,
+  );
+  selection = state.day < 0 ? base : refineSelection(slab, [dayFilter(state.day)], base, scratchB);
+
   priceHist.update(selection);
   durHist.update(selection);
   const t1 = performance.now();
@@ -565,6 +639,7 @@ function runQuery() {
   const list = $("list");
   if (list.scrollTop > selection.count * ROW_H) list.scrollTop = 0;
 
+  renderCalendar();
   renderList();
   const t2 = performance.now();
 
@@ -575,6 +650,107 @@ function runQuery() {
   if (perf.history.length > 80) perf.history.shift();
   renderHud();
   renderUrlState();
+}
+
+/* ---------- departure-date grid ---------- */
+function buildCalendar() {
+  const cal = $("cal");
+  for (const d of ["S", "M", "T", "W", "T", "F", "S"]) {
+    const h = document.createElement("div");
+    h.className = "dow";
+    h.textContent = d;
+    cal.appendChild(h);
+  }
+
+  // Blank cells so day 0 lands under its real weekday.
+  const firstDow = new Date(slab.baseDayEpoch * 86400000).getUTCDay();
+  for (let i = 0; i < firstDow; i++) {
+    const pad = document.createElement("div");
+    pad.className = "day pad";
+    cal.appendChild(pad);
+  }
+
+  for (let d = 0; d < DAYS; d++) {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "day";
+    cell.dataset.day = String(d);
+    cell.tabIndex = d === 0 ? 0 : -1; // roving tabindex: one stop for 60 cells
+    cell.innerHTML = '<span class="d mono"></span><span class="p mono"></span>';
+    cell._parts = { d: cell.querySelector(".d"), p: cell.querySelector(".p") };
+    cal.appendChild(cell);
+    dayCells.push(cell);
+  }
+
+  cal.addEventListener("click", (e) => {
+    const cell = e.target.closest(".day:not(.pad)");
+    if (!cell || cell.disabled) return;
+    const d = Number(cell.dataset.day);
+    state.day = state.day === d ? -1 : d; // clicking the chosen day clears it
+    runQuery();
+  });
+
+  cal.addEventListener("keydown", (e) => {
+    const cell = e.target.closest(".day:not(.pad)");
+    if (!cell) return;
+    const d = Number(cell.dataset.day);
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+    let next;
+    if (e.key in step) next = d + step[e.key];
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = DAYS - 1;
+    else return;
+    e.preventDefault();
+    if (next < 0 || next >= DAYS) return;
+    dayCells[d].tabIndex = -1;
+    dayCells[next].tabIndex = 0;
+    dayCells[next].focus();
+  });
+}
+
+function renderCalendar() {
+  const { min, max, filled } = valueExtent(gridMins);
+  const span = max - min || 1;
+
+  for (let d = 0; d < DAYS; d++) {
+    const cell = dayCells[d];
+    const v = gridMins[d];
+    const pressed = state.day === d;
+
+    // Most queries leave most days untouched. Writing all 60 cells anyway
+    // costs a style recalc the frame cannot spare, so diff against what is
+    // already on screen and skip the ones that did not move.
+    if (cell._v === v && cell._pressed === pressed) continue;
+    cell._v = v;
+    cell._pressed = pressed;
+
+    cell._parts.d.textContent = dayNumbers[d];
+
+    if (v === NO_VALUE) {
+      cell.disabled = true;
+      cell._parts.p.textContent = "—";
+      cell.style.background = "";
+      cell.setAttribute("aria-label", dateLabels[d] + ", no flights");
+    } else {
+      cell.disabled = false;
+      cell._parts.p.textContent = compactMoney(v);
+      // Cheapest day is the most saturated. Capped at 58% so the label keeps
+      // its contrast against the tint in both themes.
+      const pct = filled < 2 ? 58 : (58 - ((v - min) / span) * 48).toFixed(0);
+      cell.style.background = `color-mix(in srgb, var(--accent) ${pct}%, var(--surface))`;
+      cell.setAttribute("aria-label", dateLabels[d] + ", from " + money(v));
+    }
+    cell.setAttribute("aria-pressed", String(pressed));
+  }
+
+  const label = $("dateLabel");
+  if (state.day < 0) {
+    label.textContent = "any date";
+  } else {
+    const v = gridMins[state.day];
+    label.textContent =
+      dateLabels[state.day] + (v === NO_VALUE ? "" : " · from " + money(v));
+  }
 }
 
 /* ---------- virtualized list ---------- */
@@ -833,6 +1009,8 @@ function buildControls() {
     format: hoursMins,
   });
 
+  buildCalendar();
+
   priceHist.prime();
   durHist.prime();
 
@@ -889,6 +1067,7 @@ function buildControls() {
 
   $("resetBtn").addEventListener("click", () => {
     state.origin = -1;
+    state.day = -1;
     state.price = priceDomain.slice();
     state.dur = durDomain.slice();
     state.stops = new Set([0, 1, 2]);
@@ -965,6 +1144,7 @@ function renderUrlState() {
   if (state.dur[0] > durDomain[0] || state.dur[1] < durDomain[1]) {
     parts.push("d" + state.dur[0].toString(36) + "-" + state.dur[1].toString(36));
   }
+  if (state.day >= 0) parts.push("t" + state.day.toString(36));
   if (state.stops.size < 3) parts.push("s" + [...state.stops].sort().join(""));
   if (state.carriers.size < CARRIERS.length) {
     parts.push("c" + [...state.carriers].sort((a, b) => a - b).map((i) => i.toString(36)).join(""));

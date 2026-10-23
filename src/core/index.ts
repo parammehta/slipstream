@@ -5,5 +5,6 @@ export * from './bitset.ts';
 export * from './filter.ts';
 export * from './sort.ts';
 export * from './histogram.ts';
+export * from './buckets.ts';
 export * from './query.ts';
 export * from './synth.ts';

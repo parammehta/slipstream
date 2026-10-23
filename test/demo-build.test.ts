@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { renderDemo } from '../scripts/build-demo.ts';
 
 const committed = readFileSync(new URL('../demo/index.html', import.meta.url), 'utf8');
@@ -38,8 +38,14 @@ test('no module syntax survives into the flat script', () => {
 });
 
 test('every core module is inlined', () => {
-  for (const file of ['format', 'encode', 'decode', 'bitset', 'filter', 'sort', 'histogram', 'query', 'synth']) {
-    assert.ok(committed.includes(`/* ---- src/core/${file}.ts ---- */`), `${file}.ts missing`);
+  // Read the directory rather than hardcoding names: a new module that the
+  // build script forgets to list would otherwise ship missing from the demo.
+  const modules = readdirSync(new URL('../src/core', import.meta.url))
+    .filter((f) => f.endsWith('.ts') && f !== 'index.ts');
+
+  assert.ok(modules.length >= 9, `only found ${modules.length} core modules`);
+  for (const file of modules) {
+    assert.ok(committed.includes(`/* ---- src/core/${file} ---- */`), `${file} missing from the demo`);
   }
 });
 

@@ -33,6 +33,7 @@ const MODULES = [
   'decode.ts',
   'bitset.ts',
   'filter.ts',
+  'buckets.ts',
   'sort.ts',
   'histogram.ts',
   'query.ts',
