@@ -99,6 +99,10 @@ or in Node.
 synthetic offers generated in the browser, a virtualized timetable, live
 histogram sliders, a departure-date grid colour-coded by the cheapest fare that
 day, and a HUD reporting real measured query and paint times.
+
+Every view has a URL. The hash is written as you filter and read back on load,
+so a link reproduces the exact screen — it describes the whole view rather than
+patching onto whatever the recipient already had open.
 It is committed, so opening the file directly still works.
 
 It is **generated**, not hand-maintained. ES module imports are blocked for
@@ -131,7 +135,7 @@ npm run check:demo     # verify it is current without writing
 5. Harvester: scheduled worker against Amadeus Self-Service, Parquet output
 6. Worker wrapper: move the engine off the main thread
 7. Multi-city legs
-8. URL state: read the hash back on load, not just write it
+8. ~~URL state: read the hash back on load, not just write it~~ — done
 9. Write-up: benchmarks, format comparison, profiler traces
 
 ## Design notes

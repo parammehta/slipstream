@@ -50,7 +50,10 @@ function consider(
   bucketCount: number,
   row: number,
 ): void {
-  const b = (bucketBy[row] / divisor) | 0;
+  // Math.floor, not `| 0`: truncation rounds toward zero, so a row dated
+  // before the base day (-60 minutes, say) would land in bucket 0 instead of
+  // being rejected as out of range.
+  const b = Math.floor(bucketBy[row] / divisor);
   if (b < 0 || b >= bucketCount) return;
   const v = values[row];
   if (v < mins[b]) mins[b] = v;

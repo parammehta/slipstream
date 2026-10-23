@@ -132,3 +132,19 @@ test('refineSelection keeps the mask in step with the rows', () => {
   }
   assert.equal(bits, refined.count);
 });
+
+test('rows before the first bucket are rejected, not folded into bucket 0', () => {
+  const values = Uint32Array.from([111, 222]);
+  // -60 minutes is the day *before* the base day; 60 minutes is day 0.
+  const buckets = Int32Array.from([-60, 60]);
+  const mins = minPerBucket(values, buckets, MINUTES_PER_DAY, 3, null);
+  assert.equal(mins[0], 222, 'the pre-base row leaked into day 0');
+  assert.equal(mins[1], NO_VALUE);
+});
+
+test('negative buckets are rejected across a whole day boundary', () => {
+  const values = Uint32Array.from([5, 6, 7]);
+  const buckets = Int32Array.from([-1441, -1, 0]);
+  const mins = minPerBucket(values, buckets, MINUTES_PER_DAY, 2, null);
+  assert.equal(mins[0], 7, 'only the row at minute 0 belongs in bucket 0');
+});

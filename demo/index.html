@@ -895,7 +895,10 @@ function consider(
   bucketCount        ,
   row        ,
 )       {
-  const b = (bucketBy[row] / divisor) | 0;
+  // Math.floor, not `| 0`: truncation rounds toward zero, so a row dated
+  // before the base day (-60 minutes, say) would land in bucket 0 instead of
+  // being rejected as out of range.
+  const b = Math.floor(bucketBy[row] / divisor);
   if (b < 0 || b >= bucketCount) return;
   const v = values[row];
   if (v < mins[b]) mins[b] = v;
@@ -1226,6 +1229,8 @@ function boot() {
       setupDomains();
       buildDateLabels();
       buildControls();
+      // Domains must exist first: incoming ranges are clamped against them.
+      if (readUrlState()) syncControlsFromState();
       $("boot").classList.add("done");
       $("totalRows").textContent = ROWS.toLocaleString();
       runQuery();
@@ -1750,23 +1755,25 @@ function buildControls() {
   }, { passive: true });
 
   $("resetBtn").addEventListener("click", () => {
-    state.origin = -1;
-    state.day = -1;
-    state.price = priceDomain.slice();
-    state.dur = durDomain.slice();
-    state.stops = new Set([0, 1, 2]);
-    state.carriers = new Set(CARRIERS.map((_, i) => i));
-    sel.value = "-1";
-    $("routeLabel").textContent = "All origins → 30 cities";
-    $("carrierSummary").textContent = "all";
-    document.querySelectorAll(".carrier input").forEach((i) => { i.checked = true; });
-    syncStops();
+    resetFilterState();
+    syncControlsFromState();
     priceHist.refreshDomain();
     durHist.refreshDomain();
     runQuery();
   });
 
   window.addEventListener("resize", () => { renderList(); });
+
+  // Someone pasting a link into the open tab, or stepping through history.
+  // Our own writes are ignored: they already match the current state.
+  window.addEventListener("hashchange", () => {
+    if (location.hash === lastWrittenHash) return;
+    clearTimeout(urlTimer); // drop any write still queued for the old state
+    if (!readUrlState()) return;
+    syncControlsFromState();
+    $("list").scrollTop = 0;
+    runQuery();
+  });
   const scheme = window.matchMedia("(prefers-color-scheme: dark)");
   scheme.addEventListener("change", () => {
     priceHist.redraw(); durHist.redraw(); renderHud();
@@ -1819,6 +1826,106 @@ function renderHud() {
 }
 
 /* ---------- shareable state ---------- */
+
+/**
+ * Explicit sort codes. The first letter of the key is not usable: both
+ * "durationMin" and "depMin" start with d, so Fastest and Earliest encoded
+ * to the same URL.
+ */
+const SORT_CODE = { priceCents: "p", durationMin: "u", depMin: "t" };
+const SORT_BY_CODE = { p: "priceCents", u: "durationMin", t: "depMin" };
+
+/** Filter state back to defaults. Sort is not a filter, so it is left alone. */
+function resetFilterState() {
+  state.origin = -1;
+  state.day = -1;
+  state.price = priceDomain.slice();
+  state.dur = durDomain.slice();
+  state.stops = new Set([0, 1, 2]);
+  state.carriers = new Set(CARRIERS.map((_, i) => i));
+}
+
+/**
+ * Reads state back out of the location hash. Every field is validated and
+ * clamped — a hand-edited or truncated link degrades to defaults rather than
+ * breaking the page.
+ */
+function readUrlState() {
+  let hash;
+  try {
+    hash = decodeURIComponent(location.hash.replace(/^#/, ""));
+  } catch (_) {
+    return false; // malformed percent-encoding
+  }
+  // A link describes the whole view, not a patch onto whatever is on screen:
+  // without this, pasting a link that omits a segment would keep the current
+  // value for it and show something the sender never saw.
+  resetFilterState();
+  state.sort = "priceCents";
+  if (!hash) return true;
+
+  const int36 = (text) => {
+    const n = parseInt(text, 36);
+    return Number.isFinite(n) ? n : null;
+  };
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  for (const segment of hash.split("~")) {
+    const key = segment[0];
+    const body = segment.slice(1);
+
+    if (key === "o") {
+      const v = int36(body);
+      if (v !== null && v >= 0 && v < AIRPORTS.length) state.origin = v;
+    } else if (key === "p" || key === "d") {
+      const [a, b] = body.split("-").map(int36);
+      if (a === null || b === null) continue;
+      const domain = key === "p" ? priceDomain : durDomain;
+      const range = [
+        clamp(Math.min(a, b), domain[0], domain[1]),
+        clamp(Math.max(a, b), domain[0], domain[1]),
+      ];
+      if (key === "p") state.price = range;
+      else state.dur = range;
+    } else if (key === "t") {
+      const v = int36(body);
+      if (v !== null && v >= 0 && v < DAYS) state.day = v;
+    } else if (key === "s") {
+      const stops = new Set();
+      for (const ch of body) {
+        const n = Number(ch);
+        if (n >= 0 && n <= 2) stops.add(n);
+      }
+      if (stops.size) state.stops = stops;
+    } else if (key === "c") {
+      const carriers = new Set();
+      for (const ch of body) {
+        const n = int36(ch);
+        if (n !== null && n >= 0 && n < CARRIERS.length) carriers.add(n);
+      }
+      if (carriers.size) state.carriers = carriers;
+    } else if (key === "k") {
+      if (SORT_BY_CODE[body]) state.sort = SORT_BY_CODE[body];
+    }
+  }
+  return true;
+}
+
+/** Pushes state back out to every control, after a reset or a link restore. */
+function syncControlsFromState() {
+  $("originSelect").value = String(state.origin);
+  $("routeLabel").textContent =
+    state.origin < 0 ? "All origins \u2192 30 cities" : AIRPORTS[state.origin] + " \u2192 29 cities";
+  syncStops();
+  document.querySelectorAll(".carrier input").forEach((input, i) => {
+    input.checked = state.carriers.has(i);
+  });
+  $("carrierSummary").textContent =
+    state.carriers.size === CARRIERS.length ? "all" : state.carriers.size + " of " + CARRIERS.length;
+  document.querySelectorAll(".sort").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.sort === state.sort));
+  });
+}
 function renderUrlState() {
   const parts = [];
   if (state.origin >= 0) parts.push("o" + state.origin.toString(36));
@@ -1833,8 +1940,9 @@ function renderUrlState() {
   if (state.carriers.size < CARRIERS.length) {
     parts.push("c" + [...state.carriers].sort((a, b) => a - b).map((i) => i.toString(36)).join(""));
   }
-  parts.push("k" + state.sort[0]);
+  parts.push("k" + SORT_CODE[state.sort]);
   const hash = "#" + parts.join("~");
+  lastWrittenHash = hash;
   $("urlState").textContent = hash;
   $("urlLen").textContent = hash.length + " chars";
 
@@ -1842,12 +1950,18 @@ function renderUrlState() {
   // user stops moving: writing history on each pointermove is both wasteful and
   // enough to confuse anything watching for navigation.
   if (isDragging) return; // settle the address bar once the handle is released
+  pendingHash = hash;
   clearTimeout(urlTimer);
   urlTimer = setTimeout(() => {
-    try { history.replaceState(null, "", hash); } catch (_) { /* sandboxed frame */ }
+    // Write whatever the current state is, never the hash this call closed
+    // over: if a link arrives while the write is pending, the stale value
+    // would land afterwards and silently undo the navigation.
+    try { history.replaceState(null, "", pendingHash); } catch (_) { /* sandboxed frame */ }
   }, 250);
 }
 let urlTimer = 0;
+let pendingHash = "";
+let lastWrittenHash = "";
 
 boot();
 </script>
