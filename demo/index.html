@@ -1,0 +1,1223 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<meta charset="utf-8">
+<title>Slipstream Search</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root {
+  --ground: #EDEFF3;
+  --surface: #FFFFFF;
+  --surface-2: #F6F7FA;
+  --ink: #111722;
+  --ink-2: #48536480;
+  --ink-body: #485364;
+  --muted: #6E7889;
+  --line: #DBDFE7;
+  --line-strong: #C3C9D5;
+  --accent: #D65F26;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(214, 95, 38, 0.13);
+  --steel: #7FA3BB;
+  --steel-soft: rgba(127, 163, 187, 0.30);
+  --ok: #2E9E6B;
+  --warn: #C08419;
+  --bad: #CE4040;
+  --shadow: 0 1px 2px rgba(17, 23, 34, .06), 0 8px 24px rgba(17, 23, 34, .07);
+}
+:root:not([data-theme="light"]) {
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0C0F15;
+    --surface: #141922;
+    --surface-2: #1A202A;
+    --ink: #E9EDF4;
+    --ink-body: #AEB8C6;
+    --muted: #7C8695;
+    --line: #232B37;
+    --line-strong: #333D4C;
+    --accent: #F0824A;
+    --accent-ink: #1A1005;
+    --accent-soft: rgba(240, 130, 74, 0.16);
+    --steel: #6D9AB8;
+    --steel-soft: rgba(109, 154, 184, 0.28);
+    --ok: #40C089;
+    --warn: #DFAB40;
+    --bad: #E86A6A;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0C0F15;
+  --surface: #141922;
+  --surface-2: #1A202A;
+  --ink: #E9EDF4;
+  --ink-body: #AEB8C6;
+  --muted: #7C8695;
+  --line: #232B37;
+  --line-strong: #333D4C;
+  --accent: #F0824A;
+  --accent-ink: #1A1005;
+  --accent-soft: rgba(240, 130, 74, 0.16);
+  --steel: #6D9AB8;
+  --steel-soft: rgba(109, 154, 184, 0.28);
+  --ok: #40C089;
+  --warn: #DFAB40;
+  --bad: #E86A6A;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---------- header ---------- */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 18px;
+  height: 60px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.brand { display: flex; align-items: baseline; gap: 9px; flex: none; }
+.brand b { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.brand span {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); font-weight: 600;
+}
+.route {
+  display: flex; align-items: center; gap: 10px;
+  padding-left: 20px; border-left: 1px solid var(--line);
+  flex: none; min-width: 0;
+}
+.route .pair { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+.route .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.bar .spacer { flex: 1 1 auto; }
+
+.sorts { display: flex; gap: 2px; flex: none; }
+.sort {
+  appearance: none; background: none; border: 0; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--muted);
+  padding: 7px 11px; border-radius: 6px; white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.sort:hover { color: var(--ink); background: var(--surface-2); }
+.sort[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--accent); border-radius: 6px 6px 0 0; }
+.sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.count { flex: none; text-align: right; }
+.count b { font-size: 17px; font-weight: 600; color: var(--accent); letter-spacing: -0.01em; }
+.count span { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 600; }
+
+/* ---------- body ---------- */
+.body { display: grid; grid-template-columns: 296px 1fr; min-height: 0; }
+
+.rail {
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  padding: 4px 0 32px;
+}
+.group { padding: 18px; border-bottom: 1px solid var(--line); }
+.group > h2 {
+  margin: 0 0 12px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .11em;
+  color: var(--muted);
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+}
+.group > h2 em { font-style: normal; color: var(--ink-body); letter-spacing: .02em; text-transform: none; font-size: 12px; font-weight: 500; }
+
+/* range control */
+.range { user-select: none; touch-action: none; }
+.range canvas { display: block; width: 100%; height: 56px; }
+.track {
+  position: relative; height: 22px; margin-top: -1px;
+  cursor: ew-resize;
+}
+.track .rail-line {
+  position: absolute; left: 0; right: 0; top: 3px; height: 3px;
+  background: var(--line-strong); border-radius: 2px;
+}
+.track .fill {
+  position: absolute; top: 3px; height: 3px; background: var(--accent); border-radius: 2px;
+}
+.knob {
+  position: absolute; top: -3px; width: 15px; height: 15px; margin-left: -7.5px;
+  background: var(--surface); border: 2px solid var(--accent); border-radius: 50%;
+  cursor: grab; padding: 0; appearance: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,.22);
+}
+.knob:active { cursor: grabbing; }
+.knob:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  appearance: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 500;
+  padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-body);
+}
+.chip:hover { border-color: var(--muted); }
+.chip[aria-pressed="true"] {
+  background: var(--accent-soft); border-color: var(--accent); color: var(--ink);
+}
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.carriers { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.carrier {
+  display: flex; align-items: center; gap: 7px; cursor: pointer;
+  padding: 3px 4px; border-radius: 5px; font-size: 12px;
+}
+.carrier:hover { background: var(--surface-2); }
+.carrier input { accent-color: var(--accent); margin: 0; width: 13px; height: 13px; }
+.carrier .code { font-weight: 600; letter-spacing: .03em; }
+.carrier .n { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+select.origin {
+  width: 100%; font: inherit; font-size: 13px; padding: 7px 9px;
+  border: 1px solid var(--line-strong); border-radius: 6px;
+  background: var(--surface); color: var(--ink);
+}
+select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.reset {
+  appearance: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+  width: calc(100% - 36px); margin: 16px 18px 0; padding: 9px;
+  border: 1px solid var(--line-strong); border-radius: 6px;
+  background: var(--surface); color: var(--ink-body);
+}
+.reset:hover { border-color: var(--muted); color: var(--ink); }
+.reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---------- results ---------- */
+.results { position: relative; min-height: 0; display: grid; grid-template-rows: 1fr auto; }
+.list { overflow-y: auto; position: relative; }
+.spacer { position: relative; width: 100%; }
+
+.row {
+  position: absolute; left: 0; right: 0; height: 72px;
+  display: grid; grid-template-columns: 62px 1fr 132px 104px;
+  align-items: center; gap: 18px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  contain: strict;
+}
+.row:hover { background: var(--surface-2); }
+
+.row .carrier-code {
+  font-size: 13px; font-weight: 600; letter-spacing: .06em;
+  color: var(--ink-body);
+  border: 1px solid var(--line-strong); border-radius: 5px;
+  padding: 4px 0; text-align: center;
+}
+.leg { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.leg .time { font-size: 17px; font-weight: 500; letter-spacing: -0.01em; }
+.leg .time sup { font-size: 10px; color: var(--accent); font-weight: 600; margin-left: 1px; }
+.leg .port { font-size: 11px; color: var(--muted); letter-spacing: .07em; font-weight: 500; }
+.leg .cell { display: flex; flex-direction: column; gap: 1px; }
+.path { flex: 1; position: relative; height: 16px; min-width: 40px; }
+.path i {
+  position: absolute; left: 0; right: 0; top: 7px; height: 1px;
+  background: var(--line-strong);
+}
+.path b {
+  position: absolute; top: 4px; width: 7px; height: 7px; margin-left: -3.5px;
+  border-radius: 50%; background: var(--surface); border: 1.5px solid var(--line-strong);
+}
+.path.nonstop i { background: var(--steel); }
+
+.row .dur { text-align: left; }
+.row .dur .d { font-size: 13px; font-weight: 500; }
+.row .dur .s { font-size: 11px; color: var(--muted); }
+.row .dur .s.direct { color: var(--steel); font-weight: 600; }
+.row .price { text-align: right; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.row .price small { display: block; font-size: 10px; color: var(--muted); font-weight: 500; letter-spacing: .04em; text-transform: uppercase; }
+
+.empty {
+  position: absolute; inset: 0; display: none; place-content: center; text-align: center;
+  color: var(--muted); padding: 40px;
+}
+.empty h3 { margin: 0 0 6px; color: var(--ink); font-size: 15px; font-weight: 600; }
+.empty p { margin: 0; font-size: 13px; }
+.results[data-empty="true"] .empty { display: grid; }
+
+/* ---------- footer / state readout ---------- */
+.foot {
+  display: flex; align-items: center; gap: 14px;
+  padding: 8px 22px; border-top: 1px solid var(--line);
+  background: var(--surface); font-size: 11px; color: var(--muted);
+  overflow: hidden; white-space: nowrap;
+}
+.foot .url {
+  color: var(--ink-body); overflow: hidden; text-overflow: ellipsis;
+  background: var(--surface-2); padding: 3px 8px; border-radius: 4px;
+  border: 1px solid var(--line); min-width: 0;
+}
+.foot .len { flex: none; }
+
+/* ---------- perf HUD ---------- */
+.hud {
+  position: absolute; right: 18px; bottom: 52px; width: 208px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 9px; box-shadow: var(--shadow); overflow: hidden;
+}
+.hud h3 {
+  margin: 0; padding: 8px 11px; font-size: 9px; text-transform: uppercase;
+  letter-spacing: .12em; color: var(--muted); font-weight: 700;
+  border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.hud .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.hud dl { margin: 0; padding: 9px 11px; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; }
+.hud dt { font-size: 11px; color: var(--ink-body); }
+.hud dd { margin: 0; font-size: 12px; font-weight: 600; text-align: right; }
+.hud dd.good { color: var(--ok); }
+.hud dd.warn { color: var(--warn); }
+.hud dd.bad { color: var(--bad); }
+.hud canvas { display: block; width: 100%; height: 34px; border-top: 1px solid var(--line); }
+.hud .note {
+  padding: 7px 11px; font-size: 10px; line-height: 1.4; color: var(--muted);
+  border-top: 1px solid var(--line); background: var(--surface-2);
+}
+
+/* ---------- boot ---------- */
+.boot {
+  position: fixed; inset: 0; display: grid; place-content: center; gap: 10px;
+  justify-items: center; background: var(--ground); z-index: 20; text-align: center;
+}
+.boot p { margin: 0; font-size: 12px; color: var(--muted); }
+.boot .bigmono { font-size: 13px; font-weight: 500; color: var(--ink); }
+.boot.done { display: none; }
+
+/* Shed the header's secondary text before anything can clip the count. */
+@media (max-width: 1200px) { .route .meta { display: none; } }
+@media (max-width: 1040px) {
+  .brand span { display: none; }
+  .route { padding-left: 14px; }
+  .bar { gap: 14px; }
+}
+
+@media (max-width: 900px) {
+  .app { height: auto; overflow: visible; }
+  .body { grid-template-columns: 1fr; }
+  .rail { border-right: 0; border-bottom: 1px solid var(--line); }
+  .list { height: 65vh; }
+  .hud { position: fixed; right: 10px; bottom: 10px; width: 170px; }
+  .route .meta { display: none; }
+  .row { grid-template-columns: 52px 1fr 92px; gap: 10px; padding: 0 12px; }
+  .row .dur { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="boot" id="boot">
+  <p class="bigmono mono" id="bootMsg">building slab…</p>
+  <p>500,000 offers · columnar encode · radix argsort</p>
+</div>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand"><b>Slipstream</b> <span>Engine demo</span></div>
+    <div class="route">
+      <div class="pair mono" id="routeLabel">All origins → 30 cities</div>
+      <div class="meta">60-day window · <span class="mono" id="totalRows">500,000</span> offers held in memory</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="sorts" role="group" aria-label="Sort results">
+      <button class="sort" data-sort="priceCents" aria-pressed="true">Cheapest</button>
+      <button class="sort" data-sort="durationMin" aria-pressed="false">Fastest</button>
+      <button class="sort" data-sort="depMin" aria-pressed="false">Earliest</button>
+    </div>
+    <div class="count"><b class="mono" id="resultCount">—</b><span>matching</span></div>
+  </header>
+
+  <div class="body">
+    <aside class="rail">
+      <div class="group">
+        <h2>Origin</h2>
+        <select class="origin" id="originSelect" aria-label="Origin airport"></select>
+      </div>
+
+      <div class="group">
+        <h2>Price <em class="mono" id="priceLabel">—</em></h2>
+        <div class="range" id="priceRange">
+          <canvas id="priceCanvas"></canvas>
+          <div class="track" id="priceTrack">
+            <div class="rail-line"></div>
+            <div class="fill" id="priceFill"></div>
+            <button class="knob" id="priceLo" role="slider" aria-label="Minimum price" tabindex="0"></button>
+            <button class="knob" id="priceHi" role="slider" aria-label="Maximum price" tabindex="0"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Duration <em class="mono" id="durLabel">—</em></h2>
+        <div class="range" id="durRange">
+          <canvas id="durCanvas"></canvas>
+          <div class="track" id="durTrack">
+            <div class="rail-line"></div>
+            <div class="fill" id="durFill"></div>
+            <button class="knob" id="durLo" role="slider" aria-label="Minimum duration" tabindex="0"></button>
+            <button class="knob" id="durHi" role="slider" aria-label="Maximum duration" tabindex="0"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Stops</h2>
+        <div class="chips" id="stopChips">
+          <button class="chip" data-stop="0" aria-pressed="true">Nonstop</button>
+          <button class="chip" data-stop="1" aria-pressed="true">1 stop</button>
+          <button class="chip" data-stop="2" aria-pressed="true">2 stops</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Airlines <em id="carrierSummary">all</em></h2>
+        <div class="carriers" id="carrierList"></div>
+      </div>
+
+      <button class="reset" id="resetBtn">Reset filters</button>
+    </aside>
+
+    <section class="results" id="results">
+      <div class="list" id="list">
+        <div class="spacer" id="spacer"></div>
+        <div class="empty">
+          <h3>No flights match these filters</h3>
+          <p>Widen the price or duration range, or add back a stop count.</p>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Shareable state</span>
+        <span class="url mono" id="urlState">#</span>
+        <span class="len mono" id="urlLen">0 chars</span>
+      </div>
+
+      <aside class="hud" aria-label="Engine performance">
+        <h3>Engine <span class="dot" id="hudDot"></span></h3>
+        <dl>
+          <dt>Query</dt><dd class="mono" id="hudQuery">—</dd>
+          <dt>Paint</dt><dd class="mono" id="hudPaint">—</dd>
+          <dt>Scanned</dt><dd class="mono" id="hudScan">—</dd>
+        </dl>
+        <canvas id="hudSpark" aria-hidden="true"></canvas>
+        <p class="note">Query + paint, last 80 interactions. 16ms budget marked.</p>
+      </aside>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------
+   Engine — a straight port of src/core, inlined so this page is
+   self-contained. Same slab format, same selection-vector filtering,
+   same radix argsort.
+   ------------------------------------------------------------------ */
+
+const MAGIC = 0x534c4142, VERSION = 1, HEADER_BYTES = 32;
+const BYTES_PER = { u8: 1, u16: 2, u32: 4, i32: 4 };
+const OFFER_SCHEMA = [
+  ["depMin", "i32"], ["arrMin", "i32"], ["durationMin", "u16"], ["priceCents", "u32"],
+  ["stops", "u8"], ["carrierId", "u8"], ["originId", "u16"], ["destId", "u16"],
+];
+const align8 = (n) => (n + 7) & ~7;
+
+function alloc(type, n) {
+  if (type === "u8") return new Uint8Array(n);
+  if (type === "u16") return new Uint16Array(n);
+  if (type === "u32") return new Uint32Array(n);
+  return new Int32Array(n);
+}
+function view(buf, type, offset, n) {
+  if (type === "u8") return new Uint8Array(buf, offset, n);
+  if (type === "u16") return new Uint16Array(buf, offset, n);
+  if (type === "u32") return new Uint32Array(buf, offset, n);
+  return new Int32Array(buf, offset, n);
+}
+
+function encodeSlab(input) {
+  const meta = [];
+  let cursor = HEADER_BYTES;
+  for (const [name, type] of input.schema) {
+    cursor = align8(cursor);
+    const length = input.rowCount * BYTES_PER[type];
+    meta.push({ name, type, offset: cursor, length });
+    cursor += length;
+  }
+  const metaOffset = align8(cursor);
+  const metaBytes = new TextEncoder().encode(
+    JSON.stringify({ columns: meta, dicts: input.dicts, baseDayEpoch: input.baseDayEpoch })
+  );
+  const buf = new ArrayBuffer(metaOffset + metaBytes.byteLength);
+  const dv = new DataView(buf), bytes = new Uint8Array(buf);
+  dv.setUint32(0, MAGIC, false);
+  dv.setUint16(4, VERSION, true);
+  dv.setUint32(8, input.rowCount, true);
+  dv.setUint32(12, input.baseDayEpoch, true);
+  dv.setUint32(16, metaOffset, true);
+  dv.setUint32(20, metaBytes.byteLength, true);
+  for (const m of meta) {
+    const col = input.columns[m.name];
+    bytes.set(new Uint8Array(col.buffer, col.byteOffset, col.byteLength), m.offset);
+  }
+  bytes.set(metaBytes, metaOffset);
+  return buf;
+}
+
+function decodeSlab(buf) {
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, false) !== MAGIC) throw new Error("bad magic; not a slab");
+  if (dv.getUint16(4, true) !== VERSION) throw new Error("unsupported slab version");
+  const rowCount = dv.getUint32(8, true);
+  const baseDayEpoch = dv.getUint32(12, true);
+  const metaOffset = dv.getUint32(16, true), metaLength = dv.getUint32(20, true);
+  const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, metaOffset, metaLength)));
+  const columns = Object.create(null);
+  for (const m of meta.columns) columns[m.name] = view(buf, m.type, m.offset, rowCount);
+  return { rowCount, baseDayEpoch, columns, dicts: meta.dicts, byteLength: buf.byteLength };
+}
+
+/* --- filtering: selection vectors, shrinking with each predicate --- */
+function createScratch(n) {
+  return { a: new Uint32Array(n), b: new Uint32Array(n), mask: new Uint32Array((n + 31) >>> 5) };
+}
+function lookup(values) {
+  let hi = 0;
+  for (const v of values) if (v > hi) hi = v;
+  const lut = new Uint8Array(hi + 1);
+  for (const v of values) lut[v] = 1;
+  return { lut, hi };
+}
+function applyFilters(slab, filters, s) {
+  const n = slab.rowCount;
+  let src = s.a, dst = s.b, count = 0, scanned = 0;
+
+  if (filters.length === 0) {
+    for (let i = 0; i < n; i++) src[i] = i;
+    count = n; scanned = n;
+  } else {
+    const f0 = filters[0], c0 = slab.columns[f0.column];
+    let k = 0;
+    if (f0.kind === "range") {
+      const { min, max } = f0;
+      for (let i = 0; i < n; i++) { const v = c0[i]; src[k] = i; k += v >= min && v <= max ? 1 : 0; }
+    } else {
+      const { lut, hi } = lookup(f0.values);
+      for (let i = 0; i < n; i++) { const v = c0[i]; src[k] = i; k += v <= hi && lut[v] === 1 ? 1 : 0; }
+    }
+    count = k; scanned = n;
+
+    for (let fi = 1; fi < filters.length && count > 0; fi++) {
+      const f = filters[fi], col = slab.columns[f.column];
+      let w = 0;
+      if (f.kind === "range") {
+        const { min, max } = f;
+        for (let i = 0; i < count; i++) {
+          const row = src[i], v = col[row];
+          dst[w] = row; w += v >= min && v <= max ? 1 : 0;
+        }
+      } else {
+        const { lut, hi } = lookup(f.values);
+        for (let i = 0; i < count; i++) {
+          const row = src[i], v = col[row];
+          dst[w] = row; w += v <= hi && lut[v] === 1 ? 1 : 0;
+        }
+      }
+      scanned += count;
+      count = w;
+      const t = src; src = dst; dst = t;
+    }
+  }
+
+  const mask = s.mask;
+  mask.fill(0);
+  for (let i = 0; i < count; i++) { const r = src[i]; mask[r >>> 5] |= (1 << (r & 31)) >>> 0; }
+  return { rows: src, count, mask, scanned };
+}
+
+/* --- stable LSD radix argsort --- */
+function argsortU32(keys) {
+  const n = keys.length;
+  let src = new Uint32Array(n);
+  for (let i = 0; i < n; i++) src[i] = i;
+  if (n < 2) return src;
+  let dst = new Uint32Array(n);
+  const count = new Uint32Array(256);
+  for (let shift = 0; shift < 32; shift += 8) {
+    count.fill(0);
+    for (let i = 0; i < n; i++) count[(keys[src[i]] >>> shift) & 255]++;
+    let uniform = false;
+    for (let b = 0; b < 256; b++) if (count[b] === n) { uniform = true; break; }
+    if (uniform) continue;
+    let sum = 0;
+    for (let b = 0; b < 256; b++) { const c = count[b]; count[b] = sum; sum += c; }
+    for (let i = 0; i < n; i++) { const row = src[i]; dst[count[(keys[row] >>> shift) & 255]++] = row; }
+    const t = src; src = dst; dst = t;
+  }
+  return src;
+}
+function argsortColumn(col) {
+  const n = col.length, keys = new Uint32Array(n);
+  if (col instanceof Int32Array) for (let i = 0; i < n; i++) keys[i] = (col[i] ^ 0x80000000) >>> 0;
+  else for (let i = 0; i < n; i++) keys[i] = col[i];
+  return argsortU32(keys);
+}
+
+/* --- histogram over the live selection --- */
+function histogram(col, selection, min, max, bins, out) {
+  const counts = out && out.length === bins ? out.fill(0) : new Uint32Array(bins);
+  if (bins <= 0 || max < min) return counts;
+  const span = max - min, scale = span === 0 ? 0 : bins / span, last = bins - 1;
+  if (selection === null) {
+    for (let i = 0; i < col.length; i++) {
+      const v = col[i];
+      if (v < min || v > max) continue;
+      let idx = ((v - min) * scale) | 0; if (idx > last) idx = last;
+      counts[idx]++;
+    }
+    return counts;
+  }
+  const { rows, count } = selection;
+  for (let i = 0; i < count; i++) {
+    const v = col[rows[i]];
+    if (v < min || v > max) continue;
+    let idx = ((v - min) * scale) | 0; if (idx > last) idx = last;
+    counts[idx]++;
+  }
+  return counts;
+}
+
+/* --- windowed materialization for the virtual list --- */
+function materializeWindow(order, mask, offset, limit) {
+  const out = new Uint32Array(limit);
+  let seen = 0, written = 0;
+  for (let i = 0; i < order.length && written < limit; i++) {
+    const row = order[i];
+    if (((mask[row >>> 5] >>> (row & 31)) & 1) === 0) continue;
+    if (seen++ < offset) continue;
+    out[written++] = row;
+  }
+  return written === limit ? out : out.subarray(0, written);
+}
+
+/* --- synthetic offers (mulberry32, matches src/core/synth.ts) --- */
+const AIRPORTS = ["SFO","JFK","LAX","ORD","DFW","SEA","BOS","ATL","DEN","MIA","LHR","CDG","AMS","FRA","NRT","HND","SIN","DXB","BOM","DEL","SYD","YYZ","MEX","GRU","ICN","HKG","ZRH","MAD","BCN","FCO"];
+const CARRIERS = ["AA","UA","DL","AS","B6","WN","BA","LH","AF","KL","EK","SQ","QF","AC","NH"];
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateOffers(rowCount, seed) {
+  const rand = mulberry32(seed);
+  const columns = Object.create(null);
+  for (const [name, type] of OFFER_SCHEMA) columns[name] = alloc(type, rowCount);
+  const { depMin, arrMin, durationMin, priceCents, stops, carrierId, originId, destId } = columns;
+  const DAYS = 60;
+  for (let i = 0; i < rowCount; i++) {
+    let o = (rand() * AIRPORTS.length) | 0;
+    let d = (rand() * AIRPORTS.length) | 0;
+    if (d === o) d = (d + 1) % AIRPORTS.length;
+    const gap = Math.abs(o - d);
+    const baseDuration = 70 + gap * 38 + rand() * 240;
+    const stopCount = rand() < 0.42 ? 0 : rand() < 0.8 ? 1 : 2;
+    const duration = Math.min(65535, Math.round(baseDuration + stopCount * (90 + rand() * 150)));
+    const day = (rand() * DAYS) | 0;
+    const depart = day * 1440 + ((rand() * 1440) | 0);
+    const base = (4000 + baseDuration * 34) * (1 - 0.13 * stopCount);
+    const price = Math.round(base * Math.exp(rand() * 1.15));
+    originId[i] = o; destId[i] = d; carrierId[i] = (rand() * CARRIERS.length) | 0;
+    stops[i] = stopCount; durationMin[i] = duration;
+    depMin[i] = depart; arrMin[i] = depart + duration; priceCents[i] = price;
+  }
+  return { rowCount, baseDayEpoch: 20000, columns, dicts: { airports: AIRPORTS, carriers: CARRIERS }, schema: OFFER_SCHEMA };
+}
+</script>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------
+   UI — virtualized timetable, live histograms, perf HUD.
+   ------------------------------------------------------------------ */
+
+const ROWS = 500000;
+const ROW_H = 72;
+const BINS = 64;
+const $ = (id) => document.getElementById(id);
+
+let slab, orders, scratch, selection;
+let priceDomain, durDomain;
+const state = {
+  origin: -1,
+  price: [0, 0],
+  dur: [0, 0],
+  stops: new Set([0, 1, 2]),
+  carriers: new Set(CARRIERS.map((_, i) => i)),
+  sort: "priceCents",
+};
+
+const perf = { query: 0, paint: 0, scanned: 0, history: [] };
+let isDragging = false;
+let dateLabels = [];
+
+/* ---------- boot ---------- */
+function boot() {
+  const msg = $("bootMsg");
+  // setTimeout rather than rAF: background tabs and low-power modes throttle
+  // animation frames, which would stall the boot sequence mid-way.
+  const step = (text, fn) =>
+    new Promise((resolve, reject) => {
+      msg.textContent = text;
+      setTimeout(() => {
+        try { fn(); resolve(); } catch (err) { reject(err); }
+      }, 24);
+    });
+
+  let buf;
+  step("generating 500,000 offers…", () => { buf = encodeSlab(generateOffers(ROWS, 1)); })
+    .then(() => step("decoding slab…", () => {
+      slab = decodeSlab(buf);
+      scratch = createScratch(slab.rowCount);
+    }))
+    .then(() => step("building sort orders…", () => {
+      orders = {
+        priceCents: argsortColumn(slab.columns.priceCents),
+        durationMin: argsortColumn(slab.columns.durationMin),
+        depMin: argsortColumn(slab.columns.depMin),
+      };
+    }))
+    .catch((err) => {
+      msg.textContent = "failed to build: " + err.message;
+      throw err;
+    })
+    .then(() => step("ready", () => {
+      setupDomains();
+      buildDateLabels();
+      buildControls();
+      $("boot").classList.add("done");
+      $("totalRows").textContent = ROWS.toLocaleString();
+      runQuery();
+    }));
+}
+
+/** Clip the domain at p99 so one long tail doesn't flatten the histogram. */
+function percentile(column, order, p) {
+  return column[order[Math.min(order.length - 1, Math.floor(order.length * p))]];
+}
+function setupDomains() {
+  const p = slab.columns.priceCents, d = slab.columns.durationMin;
+  priceDomain = [p[orders.priceCents[0]], percentile(p, orders.priceCents, 0.99)];
+  durDomain = [d[orders.durationMin[0]], percentile(d, orders.durationMin, 0.99)];
+  state.price = priceDomain.slice();
+  state.dur = durDomain.slice();
+}
+
+function buildDateLabels() {
+  const fmt = new Intl.DateTimeFormat(undefined, {
+    weekday: "short", day: "numeric", month: "short", timeZone: "UTC",
+  });
+  for (let day = 0; day < 70; day++) {
+    dateLabels.push(fmt.format(new Date((slab.baseDayEpoch + day) * 86400000)));
+  }
+}
+
+/* ---------- formatting ---------- */
+const money = (cents) => "$" + Math.round(cents / 100).toLocaleString();
+const clock = (min) => {
+  const m = ((min % 1440) + 1440) % 1440;
+  return String((m / 60) | 0).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+};
+const hoursMins = (min) => (min >= 60 ? ((min / 60) | 0) + "h " : "") + (min % 60) + "m";
+const stopLabel = (n) => (n === 0 ? "Nonstop" : n === 1 ? "1 stop" : n + " stops");
+
+/* ---------- query ---------- */
+function buildFilters() {
+  const f = [];
+  // Most selective first: each later predicate only re-checks survivors.
+  if (state.origin >= 0) f.push({ kind: "oneOf", column: "originId", values: [state.origin] });
+  if (state.stops.size < 3) f.push({ kind: "oneOf", column: "stops", values: [...state.stops] });
+  if (state.carriers.size < CARRIERS.length) {
+    f.push({ kind: "oneOf", column: "carrierId", values: [...state.carriers] });
+  }
+  const [plo, phi] = state.price;
+  if (plo > priceDomain[0] || phi < priceDomain[1]) {
+    f.push({ kind: "range", column: "priceCents", min: plo, max: phi >= priceDomain[1] ? 0xffffffff : phi });
+  }
+  const [dlo, dhi] = state.dur;
+  if (dlo > durDomain[0] || dhi < durDomain[1]) {
+    f.push({ kind: "range", column: "durationMin", min: dlo, max: dhi >= durDomain[1] ? 65535 : dhi });
+  }
+  return f;
+}
+
+function runQuery() {
+  const t0 = performance.now();
+  selection = applyFilters(slab, buildFilters(), scratch);
+  priceHist.update(selection);
+  durHist.update(selection);
+  const t1 = performance.now();
+
+  $("resultCount").textContent = selection.count.toLocaleString();
+  $("results").dataset.empty = selection.count === 0 ? "true" : "false";
+  $("spacer").style.height = selection.count * ROW_H + "px";
+  const list = $("list");
+  if (list.scrollTop > selection.count * ROW_H) list.scrollTop = 0;
+
+  renderList();
+  const t2 = performance.now();
+
+  perf.query = t1 - t0;
+  perf.paint = t2 - t1;
+  perf.scanned = selection.scanned;
+  perf.history.push(t2 - t0);
+  if (perf.history.length > 80) perf.history.shift();
+  renderHud();
+  renderUrlState();
+}
+
+/* ---------- virtualized list ---------- */
+const pool = [];
+function makeRow() {
+  const el = document.createElement("div");
+  el.className = "row";
+  el.innerHTML =
+    '<div class="carrier-code mono"></div>' +
+    '<div class="leg">' +
+      '<div class="cell"><div class="time mono"></div><div class="port mono"></div></div>' +
+      '<div class="path"><i></i></div>' +
+      '<div class="cell"><div class="time mono"></div><div class="port mono"></div></div>' +
+    "</div>" +
+    '<div class="dur"><div class="d mono"></div><div class="s"></div></div>' +
+    '<div class="price mono"><span></span><small></small></div>';
+  const q = (s) => el.querySelector(s);
+  el._parts = {
+    carrier: q(".carrier-code"),
+    depTime: el.querySelectorAll(".cell .time")[0],
+    depPort: el.querySelectorAll(".cell .port")[0],
+    arrTime: el.querySelectorAll(".cell .time")[1],
+    arrPort: el.querySelectorAll(".cell .port")[1],
+    path: q(".path"),
+    dur: q(".dur .d"),
+    stops: q(".dur .s"),
+    price: q(".price span"),
+    date: q(".price small"),
+  };
+  $("spacer").appendChild(el);
+  pool.push(el);
+  return el;
+}
+
+function renderList() {
+  const list = $("list");
+  const c = slab.columns;
+  const order = orders[state.sort];
+  const viewport = list.clientHeight || 600;
+  const first = Math.max(0, Math.floor(list.scrollTop / ROW_H) - 3);
+  const visible = Math.min(selection.count - first, Math.ceil(viewport / ROW_H) + 6);
+
+  const rows = visible > 0 ? materializeWindow(order, selection.mask, first, visible) : [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const el = pool[i] || makeRow();
+    const p = el._parts;
+    const row = rows[i];
+
+    const dep = c.depMin[row], arr = c.arrMin[row], stops = c.stops[row];
+    const depDay = Math.floor(dep / 1440), arrDay = Math.floor(arr / 1440);
+
+    p.carrier.textContent = CARRIERS[c.carrierId[row]];
+    p.depTime.textContent = clock(dep);
+    p.depPort.textContent = AIRPORTS[c.originId[row]];
+    p.arrTime.innerHTML = clock(arr) + (arrDay > depDay ? "<sup>+" + (arrDay - depDay) + "</sup>" : "");
+    p.arrPort.textContent = AIRPORTS[c.destId[row]];
+    p.dur.textContent = hoursMins(c.durationMin[row]);
+    p.stops.textContent = stopLabel(stops);
+    p.stops.className = "s" + (stops === 0 ? " direct" : "");
+    p.price.textContent = money(c.priceCents[row]);
+    p.date.textContent = dateLabels[depDay] || "";
+
+    // Stop markers sit on the route line, evenly spaced.
+    p.path.className = "path" + (stops === 0 ? " nonstop" : "");
+    const want = stops;
+    while (p.path.children.length - 1 > want) p.path.lastChild.remove();
+    while (p.path.children.length - 1 < want) p.path.appendChild(document.createElement("b"));
+    for (let s = 0; s < want; s++) {
+      p.path.children[s + 1].style.left = ((100 * (s + 1)) / (want + 1)).toFixed(0) + "%";
+    }
+
+    el.style.transform = "translateY(" + (first + i) * ROW_H + "px)";
+    el.style.display = "";
+  }
+  for (let i = rows.length; i < pool.length; i++) pool[i].style.display = "none";
+}
+
+/* ---------- range control with live histogram ---------- */
+function makeRangeControl(opts) {
+  const canvas = $(opts.canvas), track = $(opts.track), fill = $(opts.fill);
+  const lo = $(opts.lo), hi = $(opts.hi), label = $(opts.label);
+  const ctx = canvas.getContext("2d");
+  const backdrop = new Uint32Array(BINS);
+  const active = new Uint32Array(BINS);
+  let domain = opts.domain();
+
+  function css(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 260, h = 56;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    const w = canvas.clientWidth || 260, h = 56;
+    ctx.clearRect(0, 0, w, h);
+    let peak = 1;
+    for (let i = 0; i < BINS; i++) if (backdrop[i] > peak) peak = backdrop[i];
+    const bw = w / BINS;
+    // sqrt scale: keeps the tail visible without a log axis nobody reads
+    const scale = (v) => (Math.sqrt(v) / Math.sqrt(peak)) * (h - 6);
+
+    ctx.fillStyle = css("--steel-soft");
+    for (let i = 0; i < BINS; i++) {
+      const bh = scale(backdrop[i]);
+      if (bh > 0) ctx.fillRect(i * bw, h - bh, Math.max(1, bw - 1), bh);
+    }
+    ctx.fillStyle = css("--accent");
+    for (let i = 0; i < BINS; i++) {
+      const bh = scale(active[i]);
+      if (bh > 0) ctx.fillRect(i * bw, h - bh, Math.max(1, bw - 1), bh);
+    }
+  }
+
+  function positions() {
+    const [d0, d1] = domain, span = d1 - d0 || 1;
+    const [v0, v1] = opts.value();
+    const a = ((v0 - d0) / span) * 100, b = ((v1 - d0) / span) * 100;
+    lo.style.left = a + "%";
+    hi.style.left = b + "%";
+    fill.style.left = a + "%";
+    fill.style.width = Math.max(0, b - a) + "%";
+    lo.setAttribute("aria-valuenow", String(v0));
+    hi.setAttribute("aria-valuenow", String(v1));
+    lo.setAttribute("aria-valuetext", opts.format(v0));
+    hi.setAttribute("aria-valuetext", opts.format(v1));
+    label.textContent = opts.format(v0) + " – " + opts.format(v1) + (v1 >= d1 ? "+" : "");
+  }
+
+  function valueFromClientX(clientX) {
+    const r = track.getBoundingClientRect();
+    const t = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    return Math.round(domain[0] + t * (domain[1] - domain[0]));
+  }
+
+  let dragging = null;
+  track.addEventListener("pointerdown", (e) => {
+    const v = valueFromClientX(e.clientX);
+    const [v0, v1] = opts.value();
+    dragging = Math.abs(v - v0) <= Math.abs(v - v1) ? "lo" : "hi";
+    isDragging = true;
+    track.setPointerCapture(e.pointerId);
+    onDrag(e);
+  });
+  track.addEventListener("pointermove", (e) => { if (dragging) onDrag(e); });
+  const stop = (e) => {
+    if (!dragging) return;
+    dragging = null;
+    isDragging = false;
+    renderUrlState();
+    try { track.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  track.addEventListener("pointerup", stop);
+  track.addEventListener("pointercancel", stop);
+
+  function onDrag(e) {
+    e.preventDefault();
+    const v = valueFromClientX(e.clientX);
+    const [v0, v1] = opts.value();
+    if (dragging === "lo") opts.set(Math.min(v, v1), v1);
+    else opts.set(v0, Math.max(v, v0));
+    positions();
+    runQuery();
+  }
+
+  for (const [el, which] of [[lo, "lo"], [hi, "hi"]]) {
+    el.setAttribute("aria-valuemin", String(domain[0]));
+    el.setAttribute("aria-valuemax", String(domain[1]));
+    el.addEventListener("keydown", (e) => {
+      const step = (domain[1] - domain[0]) / (e.shiftKey ? 20 : 100);
+      let delta = 0;
+      if (e.key === "ArrowLeft" || e.key === "ArrowDown") delta = -step;
+      else if (e.key === "ArrowRight" || e.key === "ArrowUp") delta = step;
+      else return;
+      e.preventDefault();
+      const [v0, v1] = opts.value();
+      if (which === "lo") opts.set(Math.round(Math.min(Math.max(domain[0], v0 + delta), v1)), v1);
+      else opts.set(v0, Math.round(Math.max(Math.min(domain[1], v1 + delta), v0)));
+      positions();
+      runQuery();
+    });
+  }
+
+  let backdropReady = false;
+  const api = {
+    update(sel) {
+      const col = slab.columns[opts.column];
+      if (!backdropReady) {
+        histogram(col, null, domain[0], domain[1], BINS, backdrop);
+        backdropReady = true;
+      }
+      if (sel.count === slab.rowCount) {
+        active.set(backdrop); // nothing filtered: the active series is the backdrop
+      } else {
+        histogram(col, sel, domain[0], domain[1], BINS, active);
+      }
+      draw();
+      positions();
+    },
+    /** Baseline series over every row — load-time work, not query work. */
+    prime() {
+      histogram(slab.columns[opts.column], null, domain[0], domain[1], BINS, backdrop);
+      backdropReady = true;
+    },
+    refreshDomain() { domain = opts.domain(); backdropReady = false; resize(); },
+    redraw: draw,
+    resize,
+  };
+  new ResizeObserver(resize).observe(canvas);
+  return api;
+}
+
+let priceHist, durHist;
+
+/* ---------- controls ---------- */
+function buildControls() {
+  // Origin
+  const sel = $("originSelect");
+  sel.innerHTML = '<option value="-1">All origins</option>';
+  AIRPORTS.forEach((code, i) => {
+    const o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = code;
+    sel.appendChild(o);
+  });
+  sel.value = "-1";
+  sel.addEventListener("change", () => {
+    state.origin = Number(sel.value);
+    $("routeLabel").textContent =
+      state.origin < 0 ? "All origins → 30 cities" : AIRPORTS[state.origin] + " → 29 cities";
+    runQuery();
+  });
+
+  priceHist = makeRangeControl({
+    canvas: "priceCanvas", track: "priceTrack", fill: "priceFill",
+    lo: "priceLo", hi: "priceHi", label: "priceLabel", column: "priceCents",
+    domain: () => priceDomain,
+    value: () => state.price,
+    set: (a, b) => { state.price = [a, b]; },
+    format: money,
+  });
+
+  durHist = makeRangeControl({
+    canvas: "durCanvas", track: "durTrack", fill: "durFill",
+    lo: "durLo", hi: "durHi", label: "durLabel", column: "durationMin",
+    domain: () => durDomain,
+    value: () => state.dur,
+    set: (a, b) => { state.dur = [a, b]; },
+    format: hoursMins,
+  });
+
+  priceHist.prime();
+  durHist.prime();
+
+  // Stops
+  $("stopChips").addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    const v = Number(chip.dataset.stop);
+    if (state.stops.has(v)) state.stops.delete(v); else state.stops.add(v);
+    if (state.stops.size === 0) state.stops.add(v); // never leave an unusable empty set
+    syncStops();
+    runQuery();
+  });
+
+  // Airlines
+  const counts = new Uint32Array(CARRIERS.length);
+  const cc = slab.columns.carrierId;
+  for (let i = 0; i < slab.rowCount; i++) counts[cc[i]]++;
+  const list = $("carrierList");
+  CARRIERS.forEach((code, i) => {
+    const lab = document.createElement("label");
+    lab.className = "carrier";
+    lab.innerHTML =
+      '<input type="checkbox" checked><span class="code mono">' + code +
+      '</span><span class="n mono">' + (counts[i] / 1000).toFixed(0) + "k</span>";
+    lab.querySelector("input").addEventListener("change", (e) => {
+      if (e.target.checked) state.carriers.add(i); else state.carriers.delete(i);
+      if (state.carriers.size === 0) { state.carriers.add(i); e.target.checked = true; }
+      $("carrierSummary").textContent =
+        state.carriers.size === CARRIERS.length ? "all" : state.carriers.size + " of " + CARRIERS.length;
+      runQuery();
+    });
+    list.appendChild(lab);
+  });
+
+  // Sort
+  document.querySelector(".sorts").addEventListener("click", (e) => {
+    const btn = e.target.closest(".sort");
+    if (!btn) return;
+    state.sort = btn.dataset.sort;
+    document.querySelectorAll(".sort").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b === btn)));
+    $("list").scrollTop = 0;
+    runQuery();
+  });
+
+  // Scrolling only repaints; it never re-filters.
+  $("list").addEventListener("scroll", () => {
+    const t0 = performance.now();
+    renderList();
+    perf.paint = performance.now() - t0;
+    renderHud();
+  }, { passive: true });
+
+  $("resetBtn").addEventListener("click", () => {
+    state.origin = -1;
+    state.price = priceDomain.slice();
+    state.dur = durDomain.slice();
+    state.stops = new Set([0, 1, 2]);
+    state.carriers = new Set(CARRIERS.map((_, i) => i));
+    sel.value = "-1";
+    $("routeLabel").textContent = "All origins → 30 cities";
+    $("carrierSummary").textContent = "all";
+    document.querySelectorAll(".carrier input").forEach((i) => { i.checked = true; });
+    syncStops();
+    priceHist.refreshDomain();
+    durHist.refreshDomain();
+    runQuery();
+  });
+
+  window.addEventListener("resize", () => { renderList(); });
+  const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+  scheme.addEventListener("change", () => {
+    priceHist.redraw(); durHist.redraw(); renderHud();
+  });
+}
+
+function syncStops() {
+  document.querySelectorAll("#stopChips .chip").forEach((c) =>
+    c.setAttribute("aria-pressed", String(state.stops.has(Number(c.dataset.stop)))));
+}
+
+/* ---------- perf HUD ---------- */
+function renderHud() {
+  const total = perf.query + perf.paint;
+  const cls = total < 8 ? "good" : total < 16 ? "warn" : "bad";
+  const q = $("hudQuery"), p = $("hudPaint");
+  q.textContent = perf.query.toFixed(2) + "ms";
+  p.textContent = perf.paint.toFixed(2) + "ms";
+  q.className = "mono " + cls;
+  p.className = "mono " + cls;
+  $("hudScan").textContent = (perf.scanned / 1000).toFixed(0) + "k rows";
+  $("hudDot").style.background = "var(--" + (cls === "good" ? "ok" : cls === "warn" ? "warn" : "bad") + ")";
+
+  const canvas = $("hudSpark"), ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 200, h = 34;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const ceiling = 24; // ms
+  const y = (ms) => h - Math.min(1, ms / ceiling) * (h - 3) - 1.5;
+
+  ctx.strokeStyle = css("--line-strong");
+  ctx.setLineDash([2, 3]);
+  ctx.beginPath(); ctx.moveTo(0, y(16)); ctx.lineTo(w, y(16)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const n = perf.history.length;
+  if (n > 1) {
+    const bw = w / 80;
+    for (let i = 0; i < n; i++) {
+      const ms = perf.history[i];
+      ctx.fillStyle = ms < 16 ? css("--accent") : css("--bad");
+      const top = y(ms);
+      ctx.fillRect(i * bw, top, Math.max(1, bw - 1), h - top - 1);
+    }
+  }
+}
+
+/* ---------- shareable state ---------- */
+function renderUrlState() {
+  const parts = [];
+  if (state.origin >= 0) parts.push("o" + state.origin.toString(36));
+  if (state.price[0] > priceDomain[0] || state.price[1] < priceDomain[1]) {
+    parts.push("p" + state.price[0].toString(36) + "-" + state.price[1].toString(36));
+  }
+  if (state.dur[0] > durDomain[0] || state.dur[1] < durDomain[1]) {
+    parts.push("d" + state.dur[0].toString(36) + "-" + state.dur[1].toString(36));
+  }
+  if (state.stops.size < 3) parts.push("s" + [...state.stops].sort().join(""));
+  if (state.carriers.size < CARRIERS.length) {
+    parts.push("c" + [...state.carriers].sort((a, b) => a - b).map((i) => i.toString(36)).join(""));
+  }
+  parts.push("k" + state.sort[0]);
+  const hash = "#" + parts.join("~");
+  $("urlState").textContent = hash;
+  $("urlLen").textContent = hash.length + " chars";
+
+  // The readout updates every frame, but the address bar only settles once the
+  // user stops moving: writing history on each pointermove is both wasteful and
+  // enough to confuse anything watching for navigation.
+  if (isDragging) return; // settle the address bar once the handle is released
+  clearTimeout(urlTimer);
+  urlTimer = setTimeout(() => {
+    try { history.replaceState(null, "", hash); } catch (_) { /* sandboxed frame */ }
+  }, 250);
+}
+let urlTimer = 0;
+
+boot();
+</script>
+
+</body></html>
