@@ -29,6 +29,7 @@ const MARKER = '<!--@ENGINE@-->';
  */
 const CORE_MODULES = [
   'format.ts',
+  'routes.ts',
   'encode.ts',
   'decode.ts',
   'bitset.ts',

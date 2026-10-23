@@ -6,6 +6,7 @@ import { argsortColumn } from '../core/sort.ts';
 import { histogram } from '../core/histogram.ts';
 import { materializeWindow } from '../core/query.ts';
 import { minPerBucket, valueExtent, MINUTES_PER_DAY, NO_VALUE } from '../core/buckets.ts';
+import { routeTable } from '../core/routes.ts';
 import type { Slab } from '../core/format.ts';
 
 /**
@@ -85,6 +86,7 @@ function init(rowCount: number, seed: number) {
     days: DAY_BUCKETS,
     bins: HIST_BINS,
     rowFields: ROW_FIELDS,
+    routeCount: routeTable().length,
     priceDomain,
     durDomain,
     priceBackdrop,

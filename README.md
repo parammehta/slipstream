@@ -109,7 +109,8 @@ src/core/
   histogram.ts   binning over the current selection
   query.ts       windowed materialization for the virtual list
   bitset.ts      membership bitsets
-  synth.ts       seeded synthetic offers for tests and benchmarks
+  routes.ts      GENERATED — real airports, airlines and routes
+  synth.ts       seeded offers over those real routes
 src/worker/
   engine-worker.ts     owns the slab; answers queries over postMessage
 demo/
@@ -122,10 +123,40 @@ scripts/
 Everything under `src/core` is dependency-free and runs unchanged in a Worker
 or in Node.
 
+## The data
+
+Fares are generated, but the geography is not. `src/core/routes.ts` is built
+from the [OpenFlights](https://openflights.org/data.html) database: **138
+airports, 32 airlines and 4,564 routes that genuinely exist between them**,
+with real coordinates.
+
+That matters because duration falls out of great-circle distance rather than
+being invented. Checked against published schedules:
+
+| | generated | real | |
+| --- | ---: | ---: | ---: |
+| SIN–HKG | 232m | ~230m | 1% |
+| SFO–LHR | 686m | ~640m | 7% |
+| JFK–LAX | 338m | ~375m | 10% |
+| LHR–CDG | 66m | ~75m | 12% |
+
+Carriers are drawn from a per-route bitmask of airlines that actually fly it,
+so BA appears on LHR–JFK, AI on BOM–DEL, and nobody flies a route they do not
+serve — the generator asserts zero violations across 300,000 offers.
+
+Two things the curation has to get right, both learned the hard way:
+codeshare rows are excluded (otherwise United "serves" Dubai–Doha), and
+airlines are picked *before* airports, because choosing airports first leaves
+pairs like Mumbai and Delhi in the set with no route between them. The
+generator refuses to emit an airport with no routes.
+
+Refresh it with `node scripts/fetch-routes.ts`; the output is committed, so
+builds and tests never touch the network.
+
 ## The demo
 
 `demo/index.html` is one self-contained file — the engine inlined, 500,000
-synthetic offers generated in the browser, a virtualized timetable, live
+offers generated in the browser over real routes, a virtualized timetable, live
 histogram sliders, a departure-date grid colour-coded by the cheapest fare that
 day, and a HUD reporting real measured query and paint times.
 
@@ -168,7 +199,8 @@ npm run check:demo     # verify it is current without writing
 2. ~~Results UI: virtualized list, live histogram sliders, frame-timing overlay~~ — done
 3. ~~Generate the demo from `src/core` so the engine has one source of truth~~ — done
 4. ~~Flexible-date price grid: cheapest fare per day, filterable~~ — done
-5. Harvester: scheduled worker against Amadeus Self-Service, Parquet output
+5. Harvester: real *fares*. Real routes are in (see [The data](#the-data));
+   live pricing still needs an Amadeus Self-Service key.
 6. ~~Worker wrapper: move the engine off the main thread~~ — done
 7. Multi-city legs
 8. ~~URL state: read the hash back on load, not just write it~~ — done
@@ -186,4 +218,7 @@ npm run check:demo     # verify it is current without writing
 
 ## License
 
-MIT
+Code: MIT.
+
+Route data derives from the OpenFlights database, which is published under the
+[Open Database License](https://opendatacommons.org/licenses/odbl/1-0/).

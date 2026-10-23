@@ -1,5 +1,6 @@
 import { OFFER_SCHEMA, allocColumn, type TypedArray } from './format.ts';
 import type { SlabInput } from './encode.ts';
+import { AIRPORTS, CARRIERS, routeTable, distanceKm } from './routes.ts';
 
 /** mulberry32 — small, fast, and seedable so benchmarks are reproducible. */
 function mulberry32(seed: number): () => number {
@@ -12,21 +13,25 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-const AIRPORTS = [
-  'SFO', 'JFK', 'LAX', 'ORD', 'DFW', 'SEA', 'BOS', 'ATL', 'DEN', 'MIA',
-  'LHR', 'CDG', 'AMS', 'FRA', 'NRT', 'HND', 'SIN', 'DXB', 'BOM', 'DEL',
-  'SYD', 'YYZ', 'MEX', 'GRU', 'ICN', 'HKG', 'ZRH', 'MAD', 'BCN', 'FCO',
-];
-
-const CARRIERS = ['AA', 'UA', 'DL', 'AS', 'B6', 'WN', 'BA', 'LH', 'AF', 'KL', 'EK', 'SQ', 'QF', 'AC', 'NH'];
+/** Cruise speed in km/h, plus fixed minutes for taxi, climb and descent. */
+const CRUISE_KMH = 800;
+const GROUND_MINUTES = 40;
+/** Economy fare model: a floor plus a per-kilometre rate, in cents. */
+const BASE_CENTS = 5000;
+const CENTS_PER_KM = 5.5;
 
 /**
- * Generate a plausible offer set: prices are lognormal-ish, duration tracks a
- * synthetic distance, and stops correlate with cheaper fares. Realistic enough
- * that filter selectivity in benchmarks resembles real traffic.
+ * Generate a plausible offer set over *real* routes.
+ *
+ * Origin and destination are drawn from routes that genuinely exist in the
+ * OpenFlights data, the carrier is one that actually serves that route, and
+ * duration follows from great-circle distance — so SFO–LHR is a long flight
+ * because London is far away, not because of where it sits in an array.
  */
 export function generateOffers(rowCount: number, seed = 1): SlabInput {
   const rand = mulberry32(seed);
+  const routes = routeTable();
+
   const columns: Record<string, TypedArray> = Object.create(null);
   for (const { name, type } of OFFER_SCHEMA) columns[name] = allocColumn(type, rowCount);
 
@@ -41,30 +46,45 @@ export function generateOffers(rowCount: number, seed = 1): SlabInput {
 
   const DAYS = 60; // a two-month shopping window
 
+  // Distance per route is the same for every offer on it, so pay for it once.
+  const routeKm = new Float32Array(routes.length);
+  for (let r = 0; r < routes.length; r++) {
+    routeKm[r] = distanceKm(AIRPORTS[routes.origin[r]], AIRPORTS[routes.dest[r]]);
+  }
+
+  // Carriers serving each route, expanded from the bitmask for fast sampling.
+  const carriersFor: number[][] = new Array(routes.length);
+  for (let r = 0; r < routes.length; r++) {
+    const mask = routes.carrierMask[r];
+    const list: number[] = [];
+    for (let c = 0; c < CARRIERS.length; c++) if (mask & (1 << c)) list.push(c);
+    carriersFor[r] = list;
+  }
+
   for (let i = 0; i < rowCount; i++) {
-    let o = (rand() * AIRPORTS.length) | 0;
-    let d = (rand() * AIRPORTS.length) | 0;
-    if (d === o) d = (d + 1) % AIRPORTS.length;
+    const r = (rand() * routes.length) | 0;
+    const km = routeKm[r];
 
-    // Stand-in for great-circle distance: index gap wrapped into a range.
-    const gap = Math.abs(o - d);
-    const baseDuration = 70 + gap * 38 + rand() * 240;
+    // Long flights are likelier to be sold with a connection.
+    const stopBias = km > 6000 ? 0.3 : km > 2000 ? 0.45 : 0.62;
+    const stopCount = rand() < stopBias ? 0 : rand() < 0.82 ? 1 : 2;
 
-    const stopCount = rand() < 0.42 ? 0 : rand() < 0.8 ? 1 : 2;
-    const duration = Math.min(65535, Math.round(baseDuration + stopCount * (90 + rand() * 150)));
+    const nonstopMinutes = GROUND_MINUTES + (km / CRUISE_KMH) * 60;
+    // Each connection adds a layover plus the detour it implies.
+    const connection = stopCount * (70 + rand() * 150) + stopCount * nonstopMinutes * 0.18;
+    const duration = Math.min(65535, Math.round(nonstopMinutes + connection));
 
     const day = (rand() * DAYS) | 0;
     const depart = day * 1440 + ((rand() * 1440) | 0);
 
-    // Nonstops cost more per minute; long tail on the top end. The stop
-    // discount is multiplicative so short two-stop hops stay positive instead
-    // of clamping to a floor and producing thousands of identical fares.
-    const base = (4000 + baseDuration * 34) * (1 - 0.13 * stopCount);
-    const price = Math.round(base * Math.exp(rand() * 1.15));
+    // Connections sell cheaper; the tail is lognormal.
+    const base = (BASE_CENTS + km * CENTS_PER_KM) * (1 - 0.13 * stopCount);
+    const price = Math.round(base * Math.exp(rand() * 0.95));
 
-    originId[i] = o;
-    destId[i] = d;
-    carrierId[i] = (rand() * CARRIERS.length) | 0;
+    const serving = carriersFor[r];
+    originId[i] = routes.origin[r];
+    destId[i] = routes.dest[r];
+    carrierId[i] = serving[(rand() * serving.length) | 0];
     stops[i] = stopCount;
     durationMin[i] = duration;
     depMin[i] = depart;
@@ -76,7 +96,11 @@ export function generateOffers(rowCount: number, seed = 1): SlabInput {
     rowCount,
     baseDayEpoch: 20000, // 2024-10-04; arbitrary but fixed for reproducibility
     columns,
-    dicts: { airports: AIRPORTS.slice(), carriers: CARRIERS.slice() },
+    dicts: {
+      airports: AIRPORTS.map((a) => a.iata),
+      carriers: CARRIERS.slice(),
+      cities: AIRPORTS.map((a) => a.city),
+    },
     schema: OFFER_SCHEMA,
   };
 }
