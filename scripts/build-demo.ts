@@ -20,8 +20,8 @@ import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATE = join(ROOT, 'demo/index.template.html');
-/** The app moved to /app so that / can be the landing page. */
-const OUTPUT = join(ROOT, 'demo/app/index.html');
+/** The search lives at /search so that / can be the landing page. */
+const OUTPUT = join(ROOT, 'demo/search/index.html');
 const LANDING_SOURCE = join(ROOT, 'demo/landing.template.html');
 const LANDING_OUTPUT = join(ROOT, 'demo/index.html');
 const MARKER = '<!--@ENGINE@-->';
@@ -189,7 +189,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
   if (process.argv.includes('--check')) {
     const stale: string[] = [];
-    if (readFileSync(OUTPUT, 'utf8') !== app) stale.push('demo/app/index.html');
+    if (readFileSync(OUTPUT, 'utf8') !== app) stale.push('demo/search/index.html');
     if (readFileSync(LANDING_OUTPUT, 'utf8') !== landing) stale.push('demo/index.html');
     if (stale.length) {
       console.error(`${stale.join(' and ')} stale — run: npm run build:demo`);
@@ -201,7 +201,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     writeFileSync(OUTPUT, app);
     writeFileSync(LANDING_OUTPUT, landing);
     console.log(
-      `wrote demo/app/index.html (${app.length.toLocaleString()} bytes)\n` +
+      `wrote demo/search/index.html (${app.length.toLocaleString()} bytes)\n` +
       `wrote demo/index.html (${landing.length.toLocaleString()} bytes)`,
     );
   }

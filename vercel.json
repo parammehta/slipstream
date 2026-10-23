@@ -3,5 +3,12 @@
   "outputDirectory": "demo",
   "installCommand": "echo 'no dependencies'",
   "buildCommand": "node --disable-warning=ExperimentalWarning scripts/build-demo.ts",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/app",
+      "destination": "/search",
+      "permanent": true
+    }
+  ]
 }

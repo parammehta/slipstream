@@ -3,7 +3,7 @@
 Flight search where the interesting part is the search UX, not the booking flow.
 
 **[slipstream-search.vercel.app](https://slipstream-search.vercel.app)** — the
-write-up and the engine behind it · **[open the search →](https://slipstream-search.vercel.app/app)**
+write-up and the engine behind it · **[open the search →](https://slipstream-search.vercel.app/search)**
 
 There is no free flight-pricing API to call per keystroke. The ones that
 existed were rate-limited to hundreds of calls a day, and Amadeus — the last
@@ -151,7 +151,7 @@ demo/
   index.template.html     the search UI: markup, styles, script
   landing.template.html   the landing page and write-up
   index.html              GENERATED — the landing page
-  app/index.html          GENERATED — the search, engine inlined
+  search/index.html       GENERATED — the search, engine inlined
 scripts/
   build-demo.ts           inlines src/core into the template
 ```
@@ -219,7 +219,7 @@ downstream is shared.
 
 ## The demo
 
-`demo/app/index.html` is one self-contained file — the engine inlined, 500,000
+`demo/search/index.html` is one self-contained file — the engine inlined, 500,000
 offers generated in the browser over real routes, a virtualized timetable, live
 histogram sliders, a departure-date grid colour-coded by the cheapest fare that
 day, and a HUD reporting real measured query and paint times.
@@ -239,8 +239,8 @@ injects them into `demo/index.template.html`.
 Edit the engine in `src/core` or `src/worker` and run `npm run build:demo`.
 `npm test` fails if the committed file is stale, so the two cannot drift.
 
-The build emits two pages: `/` is the landing page and write-up, `/app` is
-the search itself.
+The build emits two pages: `/` is the landing page and write-up, `/search`
+is the search itself.
 
 Query-string switches:
 
