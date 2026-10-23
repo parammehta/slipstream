@@ -354,6 +354,8 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 
 @media (max-width: 900px) {
   .app { height: auto; overflow: visible; }
+  /* The rail goes full-width when stacked; keep the date cells calendar-sized. */
+  .cal, .cal-legend { max-width: 360px; }
   .body { grid-template-columns: 1fr; }
   .rail { border-right: 0; border-bottom: 1px solid var(--line); }
   .list { height: 65vh; }
