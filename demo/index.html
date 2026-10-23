@@ -437,202 +437,497 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 <script>
 "use strict";
 /* ------------------------------------------------------------------
-   Engine — a straight port of src/core, inlined so this page is
-   self-contained. Same slab format, same selection-vector filtering,
-   same radix argsort.
+   GENERATED FILE — do not edit this block.
+
+   Produced by scripts/build-demo.ts from src/core/*.ts. Edit the engine
+   there and run `npm run build:demo`; `npm test` fails if this file is
+   stale.
    ------------------------------------------------------------------ */
 
-const MAGIC = 0x534c4142, VERSION = 1, HEADER_BYTES = 32;
-const BYTES_PER = { u8: 1, u16: 2, u32: 4, i32: 4 };
-const OFFER_SCHEMA = [
-  ["depMin", "i32"], ["arrMin", "i32"], ["durationMin", "u16"], ["priceCents", "u32"],
-  ["stops", "u8"], ["carrierId", "u8"], ["originId", "u16"], ["destId", "u16"],
+/* ---- src/core/format.ts ---- */
+/**
+ * Slab: a columnar binary container for flight offers.
+ *
+ * Layout:
+ *   [0,32)            header
+ *   [32, metaOffset)  column data, each column 8-byte aligned
+ *   [metaOffset, +metaLength)  UTF-8 JSON metadata (column table + dictionaries)
+ *
+ * Columns are stored as parallel arrays so a filter pass touches only the
+ * bytes it needs. Strings live in dictionaries and are referenced by integer
+ * id, which is what keeps the payload an order of magnitude under JSON.
+ */
+
+const MAGIC = 0x534c4142; // 'SLAB' big-endian read
+const VERSION = 1;
+const HEADER_BYTES = 32;
+
+const BYTES_PER                        = { u8: 1, u16: 2, u32: 4, i32: 4 };
+
+/**
+ * Canonical offer schema. Widths are chosen to be the smallest that cannot
+ * overflow for realistic data: durationMin caps at ~45 days, priceCents at
+ * ~$42M, and stops/carrierId at 255 distinct values.
+ */
+const OFFER_SCHEMA                                               = [
+  { name: 'depMin', type: 'i32' },
+  { name: 'arrMin', type: 'i32' },
+  { name: 'durationMin', type: 'u16' },
+  { name: 'priceCents', type: 'u32' },
+  { name: 'stops', type: 'u8' },
+  { name: 'carrierId', type: 'u8' },
+  { name: 'originId', type: 'u16' },
+  { name: 'destId', type: 'u16' },
 ];
-const align8 = (n) => (n + 7) & ~7;
 
-function alloc(type, n) {
-  if (type === "u8") return new Uint8Array(n);
-  if (type === "u16") return new Uint16Array(n);
-  if (type === "u32") return new Uint32Array(n);
-  return new Int32Array(n);
-}
-function view(buf, type, offset, n) {
-  if (type === "u8") return new Uint8Array(buf, offset, n);
-  if (type === "u16") return new Uint16Array(buf, offset, n);
-  if (type === "u32") return new Uint32Array(buf, offset, n);
-  return new Int32Array(buf, offset, n);
+function allocColumn(type       , rowCount        )             {
+  switch (type) {
+    case 'u8':
+      return new Uint8Array(rowCount);
+    case 'u16':
+      return new Uint16Array(rowCount);
+    case 'u32':
+      return new Uint32Array(rowCount);
+    case 'i32':
+      return new Int32Array(rowCount);
+  }
 }
 
-function encodeSlab(input) {
-  const meta = [];
+function viewColumn(buf             , meta            , rowCount        )             {
+  switch (meta.type) {
+    case 'u8':
+      return new Uint8Array(buf, meta.offset, rowCount);
+    case 'u16':
+      return new Uint16Array(buf, meta.offset, rowCount);
+    case 'u32':
+      return new Uint32Array(buf, meta.offset, rowCount);
+    case 'i32':
+      return new Int32Array(buf, meta.offset, rowCount);
+  }
+}
+
+function align8(n        )         {
+  return (n + 7) & ~7;
+}
+
+/* ---- src/core/encode.ts ---- */
+/**
+ * Serialize columns into a single ArrayBuffer. Columns keep their natural
+ * alignment so the decoder can create zero-copy views over the same memory.
+ */
+function encodeSlab(input           )              {
+  const { rowCount, schema, columns } = input;
+
+  const columnMeta               = [];
   let cursor = HEADER_BYTES;
-  for (const [name, type] of input.schema) {
+  for (const { name, type } of schema) {
+    const col = columns[name];
+    if (!col) throw new Error(`encodeSlab: missing column "${name}"`);
+    if (col.length !== rowCount) {
+      throw new Error(`encodeSlab: column "${name}" has ${col.length} rows, expected ${rowCount}`);
+    }
     cursor = align8(cursor);
-    const length = input.rowCount * BYTES_PER[type];
-    meta.push({ name, type, offset: cursor, length });
+    const length = rowCount * BYTES_PER[type];
+    columnMeta.push({ name, type, offset: cursor, length });
     cursor += length;
   }
+
   const metaOffset = align8(cursor);
-  const metaBytes = new TextEncoder().encode(
-    JSON.stringify({ columns: meta, dicts: input.dicts, baseDayEpoch: input.baseDayEpoch })
-  );
+  const meta           = {
+    columns: columnMeta,
+    dicts: input.dicts,
+    baseDayEpoch: input.baseDayEpoch,
+  };
+  const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
+
   const buf = new ArrayBuffer(metaOffset + metaBytes.byteLength);
-  const dv = new DataView(buf), bytes = new Uint8Array(buf);
-  dv.setUint32(0, MAGIC, false);
-  dv.setUint16(4, VERSION, true);
-  dv.setUint32(8, input.rowCount, true);
-  dv.setUint32(12, input.baseDayEpoch, true);
-  dv.setUint32(16, metaOffset, true);
-  dv.setUint32(20, metaBytes.byteLength, true);
-  for (const m of meta) {
-    const col = input.columns[m.name];
+  const view = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+
+  view.setUint32(0, MAGIC, false);
+  view.setUint16(4, VERSION, true);
+  view.setUint16(6, 0, true); // flags, reserved
+  view.setUint32(8, rowCount, true);
+  view.setUint32(12, input.baseDayEpoch, true);
+  view.setUint32(16, metaOffset, true);
+  view.setUint32(20, metaBytes.byteLength, true);
+  view.setUint32(24, 0, true); // reserved
+  view.setUint32(28, 0, true); // reserved
+
+  for (const m of columnMeta) {
+    const col = columns[m.name];
     bytes.set(new Uint8Array(col.buffer, col.byteOffset, col.byteLength), m.offset);
   }
   bytes.set(metaBytes, metaOffset);
+
   return buf;
 }
 
-function decodeSlab(buf) {
-  const dv = new DataView(buf);
-  if (dv.getUint32(0, false) !== MAGIC) throw new Error("bad magic; not a slab");
-  if (dv.getUint16(4, true) !== VERSION) throw new Error("unsupported slab version");
-  const rowCount = dv.getUint32(8, true);
-  const baseDayEpoch = dv.getUint32(12, true);
-  const metaOffset = dv.getUint32(16, true), metaLength = dv.getUint32(20, true);
-  const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, metaOffset, metaLength)));
-  const columns = Object.create(null);
-  for (const m of meta.columns) columns[m.name] = view(buf, m.type, m.offset, rowCount);
+/* ---- src/core/decode.ts ---- */
+/**
+ * Read a slab without copying: every column is a typed-array view over the
+ * original buffer, so decoding a 10MB payload costs a JSON.parse of the
+ * metadata and nothing more.
+ */
+function decodeSlab(buf             )       {
+  if (buf.byteLength < HEADER_BYTES) throw new Error('decodeSlab: buffer too small');
+  const view = new DataView(buf);
+
+  const magic = view.getUint32(0, false);
+  if (magic !== MAGIC) throw new Error('decodeSlab: bad magic; not a slab');
+  const version = view.getUint16(4, true);
+  if (version !== VERSION) throw new Error(`decodeSlab: unsupported version ${version}`);
+
+  const rowCount = view.getUint32(8, true);
+  const baseDayEpoch = view.getUint32(12, true);
+  const metaOffset = view.getUint32(16, true);
+  const metaLength = view.getUint32(20, true);
+
+  if (metaOffset + metaLength > buf.byteLength) throw new Error('decodeSlab: truncated metadata');
+
+  const metaJson = new TextDecoder().decode(new Uint8Array(buf, metaOffset, metaLength));
+  const meta = JSON.parse(metaJson)            ;
+
+  const columns                             = Object.create(null);
+  for (const m of meta.columns) {
+    if (m.offset + m.length > buf.byteLength) {
+      throw new Error(`decodeSlab: column "${m.name}" out of bounds`);
+    }
+    columns[m.name] = viewColumn(buf, m, rowCount);
+  }
+
   return { rowCount, baseDayEpoch, columns, dicts: meta.dicts, byteLength: buf.byteLength };
 }
 
-/* --- filtering: selection vectors, shrinking with each predicate --- */
-function createScratch(n) {
-  return { a: new Uint32Array(n), b: new Uint32Array(n), mask: new Uint32Array((n + 31) >>> 5) };
+/* ---- src/core/bitset.ts ---- */
+/**
+ * Bitsets over row ids. One bit per row keeps a 1M-row mask at 128KB, which
+ * fits in L2 and makes intersecting several filters close to free.
+ */
+
+function createBitset(rowCount        )              {
+  return new Uint32Array((rowCount + 31) >>> 5);
 }
-function lookup(values) {
+
+/** Set bits [0, rowCount) and clear the padding bits in the final word. */
+function fillOnes(bs             , rowCount        )              {
+  bs.fill(0xffffffff);
+  const rem = rowCount & 31;
+  if (rem !== 0 && bs.length > 0) {
+    bs[bs.length - 1] = (((1 << rem) >>> 0) - 1) >>> 0;
+  }
+  return bs;
+}
+
+function getBit(bs             , i        )          {
+  return ((bs[i >>> 5] >>> (i & 31)) & 1) === 1;
+}
+
+function setBit(bs             , i        )       {
+  bs[i >>> 5] |= (1 << (i & 31)) >>> 0;
+}
+
+function clearBit(bs             , i        )       {
+  bs[i >>> 5] &= ~((1 << (i & 31)) >>> 0);
+}
+
+/** Hamming weight of a 32-bit word (SWAR). */
+function popcount32(v        )         {
+  v = v - ((v >>> 1) & 0x55555555);
+  v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+  return (((v + (v >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
+}
+
+function popcount(bs             )         {
+  let total = 0;
+  for (let w = 0; w < bs.length; w++) total += popcount32(bs[w]);
+  return total;
+}
+
+function andInto(target             , other             )       {
+  for (let w = 0; w < target.length; w++) target[w] &= other[w];
+}
+
+/* ---- src/core/filter.ts ---- */
+/**
+ * A selection vector: `rows.subarray(0, count)` holds the surviving row ids in
+ * ascending order.
+ *
+ * Filters shrink this list rather than re-scanning every row, so only the
+ * first predicate costs a full pass and each subsequent one costs whatever
+ * survived the last. That is the difference between 16ms and 8ms at 1M rows.
+ */
+
+/** Reusable buffers so dragging a slider allocates nothing. */
+
+function createScratch(rowCount        )                {
+  return {
+    a: new Uint32Array(rowCount),
+    b: new Uint32Array(rowCount),
+    mask: createBitset(rowCount),
+  };
+}
+
+function applyFilters(slab      , filters          , scratch                )            {
+  const n = slab.rowCount;
+  const s = scratch && scratch.a.length === n ? scratch : createScratch(n);
+
+  let src = s.a;
+  let dst = s.b;
+  let count = 0;
+  let scanned = 0;
+
+  if (filters.length === 0) {
+    for (let i = 0; i < n; i++) src[i] = i;
+    count = n;
+    scanned = n;
+  } else {
+    count = firstPass(slab, filters[0], src, n);
+    scanned = n;
+    for (let f = 1; f < filters.length && count > 0; f++) {
+      scanned += count;
+      count = narrow(slab, filters[f], src, count, dst);
+      const tmp = src;
+      src = dst;
+      dst = tmp;
+    }
+  }
+
+  const mask = s.mask;
+  mask.fill(0);
+  for (let i = 0; i < count; i++) {
+    const row = src[i];
+    mask[row >>> 5] |= (1 << (row & 31)) >>> 0;
+  }
+
+  return { rows: src, count, mask, scanned };
+}
+
+/** Scan every row once, writing survivors into `out`. */
+function firstPass(slab      , f        , out             , n        )         {
+  const col = column(slab, f);
+  let k = 0;
+  if (f.kind === 'range') {
+    const { min, max } = f;
+    for (let i = 0; i < n; i++) {
+      const v = col[i];
+      out[k] = i;
+      // Branchless: always write, advance only on a match.
+      k += v >= min && v <= max ? 1 : 0;
+    }
+  } else {
+    const { lut, hi } = lookup(f.values);
+    for (let i = 0; i < n; i++) {
+      const v = col[i];
+      out[k] = i;
+      k += v <= hi && lut[v] === 1 ? 1 : 0;
+    }
+  }
+  return k;
+}
+
+/** Re-check only the rows that are still in play. */
+function narrow(slab      , f        , src             , count        , out             )         {
+  const col = column(slab, f);
+  let k = 0;
+  if (f.kind === 'range') {
+    const { min, max } = f;
+    for (let i = 0; i < count; i++) {
+      const row = src[i];
+      const v = col[row];
+      out[k] = row;
+      k += v >= min && v <= max ? 1 : 0;
+    }
+  } else {
+    const { lut, hi } = lookup(f.values);
+    for (let i = 0; i < count; i++) {
+      const row = src[i];
+      const v = col[row];
+      out[k] = row;
+      k += v <= hi && lut[v] === 1 ? 1 : 0;
+    }
+  }
+  return k;
+}
+
+function column(slab      , f        )             {
+  const col = slab.columns[f.column];
+  if (!col) throw new Error(`applyFilters: unknown column "${f.column}"`);
+  return col;
+}
+
+/** Dense lookup table: membership in one array read, however many ids. */
+function lookup(values          )                                  {
   let hi = 0;
   for (const v of values) if (v > hi) hi = v;
   const lut = new Uint8Array(hi + 1);
   for (const v of values) lut[v] = 1;
   return { lut, hi };
 }
-function applyFilters(slab, filters, s) {
-  const n = slab.rowCount;
-  let src = s.a, dst = s.b, count = 0, scanned = 0;
 
-  if (filters.length === 0) {
-    for (let i = 0; i < n; i++) src[i] = i;
-    count = n; scanned = n;
-  } else {
-    const f0 = filters[0], c0 = slab.columns[f0.column];
-    let k = 0;
-    if (f0.kind === "range") {
-      const { min, max } = f0;
-      for (let i = 0; i < n; i++) { const v = c0[i]; src[k] = i; k += v >= min && v <= max ? 1 : 0; }
-    } else {
-      const { lut, hi } = lookup(f0.values);
-      for (let i = 0; i < n; i++) { const v = c0[i]; src[k] = i; k += v <= hi && lut[v] === 1 ? 1 : 0; }
-    }
-    count = k; scanned = n;
-
-    for (let fi = 1; fi < filters.length && count > 0; fi++) {
-      const f = filters[fi], col = slab.columns[f.column];
-      let w = 0;
-      if (f.kind === "range") {
-        const { min, max } = f;
-        for (let i = 0; i < count; i++) {
-          const row = src[i], v = col[row];
-          dst[w] = row; w += v >= min && v <= max ? 1 : 0;
-        }
-      } else {
-        const { lut, hi } = lookup(f.values);
-        for (let i = 0; i < count; i++) {
-          const row = src[i], v = col[row];
-          dst[w] = row; w += v <= hi && lut[v] === 1 ? 1 : 0;
-        }
-      }
-      scanned += count;
-      count = w;
-      const t = src; src = dst; dst = t;
-    }
-  }
-
-  const mask = s.mask;
-  mask.fill(0);
-  for (let i = 0; i < count; i++) { const r = src[i]; mask[r >>> 5] |= (1 << (r & 31)) >>> 0; }
-  return { rows: src, count, mask, scanned };
-}
-
-/* --- stable LSD radix argsort --- */
-function argsortU32(keys) {
+/* ---- src/core/sort.ts ---- */
+/**
+ * Stable LSD radix argsort over 32-bit keys: four counting passes, no
+ * comparator calls. ~10x faster than Array#sort with a comparator at 1M rows,
+ * which is what makes precomputing a permutation per sort key affordable.
+ */
+function argsortU32(keys             )              {
   const n = keys.length;
   let src = new Uint32Array(n);
   for (let i = 0; i < n; i++) src[i] = i;
   if (n < 2) return src;
+
   let dst = new Uint32Array(n);
   const count = new Uint32Array(256);
+
   for (let shift = 0; shift < 32; shift += 8) {
     count.fill(0);
     for (let i = 0; i < n; i++) count[(keys[src[i]] >>> shift) & 255]++;
+
+    // If every key shares this byte the pass is a no-op; skip it. Prices and
+    // durations rarely use the top bytes, so this usually saves two passes.
     let uniform = false;
-    for (let b = 0; b < 256; b++) if (count[b] === n) { uniform = true; break; }
+    for (let b = 0; b < 256; b++) {
+      if (count[b] === n) {
+        uniform = true;
+        break;
+      }
+    }
     if (uniform) continue;
+
     let sum = 0;
-    for (let b = 0; b < 256; b++) { const c = count[b]; count[b] = sum; sum += c; }
-    for (let i = 0; i < n; i++) { const row = src[i]; dst[count[(keys[row] >>> shift) & 255]++] = row; }
-    const t = src; src = dst; dst = t;
+    for (let b = 0; b < 256; b++) {
+      const c = count[b];
+      count[b] = sum;
+      sum += c;
+    }
+    for (let i = 0; i < n; i++) {
+      const row = src[i];
+      dst[count[(keys[row] >>> shift) & 255]++] = row;
+    }
+    const tmp = src;
+    src = dst;
+    dst = tmp;
   }
   return src;
 }
-function argsortColumn(col) {
-  const n = col.length, keys = new Uint32Array(n);
-  if (col instanceof Int32Array) for (let i = 0; i < n; i++) keys[i] = (col[i] ^ 0x80000000) >>> 0;
-  else for (let i = 0; i < n; i++) keys[i] = col[i];
-  return argsortU32(keys);
+
+/**
+ * Map a column onto unsigned sort keys. Signed values are biased by 2^31 so
+ * their two's-complement order matches unsigned order.
+ */
+function toSortKeys(col            )              {
+  const n = col.length;
+  const keys = new Uint32Array(n);
+  if (col instanceof Int32Array) {
+    for (let i = 0; i < n; i++) keys[i] = (col[i] ^ 0x80000000) >>> 0;
+  } else {
+    for (let i = 0; i < n; i++) keys[i] = col[i];
+  }
+  return keys;
 }
 
-/* --- histogram over the live selection --- */
-function histogram(col, selection, min, max, bins, out) {
+/** Ascending permutation of row ids for a column. */
+function argsortColumn(col            )              {
+  return argsortU32(toSortKeys(col));
+}
+
+/** Reverse a permutation in place-free fashion, for descending sorts. */
+function reversePermutation(order             )              {
+  const n = order.length;
+  const out = new Uint32Array(n);
+  for (let i = 0; i < n; i++) out[i] = order[n - 1 - i];
+  return out;
+}
+
+/* ---- src/core/histogram.ts ---- */
+/**
+ * Bin a column over the current selection. This is what lets the price slider
+ * redraw its own distribution while it is being dragged.
+ *
+ * Pass `selection` as null to bin every row — the unfiltered backdrop series
+ * drawn behind the live one.
+ */
+function histogram(
+  col            ,
+  selection                  ,
+  min        ,
+  max        ,
+  bins        ,
+  out              ,
+)              {
   const counts = out && out.length === bins ? out.fill(0) : new Uint32Array(bins);
   if (bins <= 0 || max < min) return counts;
-  const span = max - min, scale = span === 0 ? 0 : bins / span, last = bins - 1;
+
+  const span = max - min;
+  const scale = span === 0 ? 0 : bins / span;
+  const last = bins - 1;
+
   if (selection === null) {
-    for (let i = 0; i < col.length; i++) {
-      const v = col[i];
-      if (v < min || v > max) continue;
-      let idx = ((v - min) * scale) | 0; if (idx > last) idx = last;
-      counts[idx]++;
-    }
+    for (let i = 0; i < col.length; i++) tally(counts, col[i], min, max, scale, last);
     return counts;
   }
+
   const { rows, count } = selection;
-  for (let i = 0; i < count; i++) {
-    const v = col[rows[i]];
-    if (v < min || v > max) continue;
-    let idx = ((v - min) * scale) | 0; if (idx > last) idx = last;
-    counts[idx]++;
-  }
+  for (let i = 0; i < count; i++) tally(counts, col[rows[i]], min, max, scale, last);
   return counts;
 }
 
-/* --- windowed materialization for the virtual list --- */
-function materializeWindow(order, mask, offset, limit) {
+function tally(
+  counts             ,
+  v        ,
+  min        ,
+  max        ,
+  scale        ,
+  last        ,
+)       {
+  if (v < min || v > max) return;
+  let idx = ((v - min) * scale) | 0;
+  if (idx > last) idx = last; // the maximum value belongs in the final bin
+  counts[idx]++;
+}
+
+/* ---- src/core/query.ts ---- */
+/**
+ * Walk a precomputed sort order and collect the rows that survive the mask,
+ * skipping `offset` and stopping at `limit`.
+ *
+ * The virtualized list only ever asks for the ~40 rows it is about to paint,
+ * so paging never materializes the full result set.
+ */
+function materializeWindow(
+  order             ,
+  mask             ,
+  offset        ,
+  limit        ,
+)              {
   const out = new Uint32Array(limit);
-  let seen = 0, written = 0;
+  let seen = 0;
+  let written = 0;
   for (let i = 0; i < order.length && written < limit; i++) {
     const row = order[i];
-    if (((mask[row >>> 5] >>> (row & 31)) & 1) === 0) continue;
+    if (!getBit(mask, row)) continue;
     if (seen++ < offset) continue;
     out[written++] = row;
   }
   return written === limit ? out : out.subarray(0, written);
 }
 
-/* --- synthetic offers (mulberry32, matches src/core/synth.ts) --- */
-const AIRPORTS = ["SFO","JFK","LAX","ORD","DFW","SEA","BOS","ATL","DEN","MIA","LHR","CDG","AMS","FRA","NRT","HND","SIN","DXB","BOM","DEL","SYD","YYZ","MEX","GRU","ICN","HKG","ZRH","MAD","BCN","FCO"];
-const CARRIERS = ["AA","UA","DL","AS","B6","WN","BA","LH","AF","KL","EK","SQ","QF","AC","NH"];
+/** Rank of a row within the current filtered+sorted result, or -1 if excluded. */
+function rankOf(order             , mask             , row        )         {
+  if (!getBit(mask, row)) return -1;
+  let rank = 0;
+  for (let i = 0; i < order.length; i++) {
+    const r = order[i];
+    if (r === row) return rank;
+    if (getBit(mask, r)) rank++;
+  }
+  return -1;
+}
 
-function mulberry32(seed) {
+/* ---- src/core/synth.ts ---- */
+/** mulberry32 — small, fast, and seedable so benchmarks are reproducible. */
+function mulberry32(seed        )               {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -642,29 +937,73 @@ function mulberry32(seed) {
   };
 }
 
-function generateOffers(rowCount, seed) {
+const AIRPORTS = [
+  'SFO', 'JFK', 'LAX', 'ORD', 'DFW', 'SEA', 'BOS', 'ATL', 'DEN', 'MIA',
+  'LHR', 'CDG', 'AMS', 'FRA', 'NRT', 'HND', 'SIN', 'DXB', 'BOM', 'DEL',
+  'SYD', 'YYZ', 'MEX', 'GRU', 'ICN', 'HKG', 'ZRH', 'MAD', 'BCN', 'FCO',
+];
+
+const CARRIERS = ['AA', 'UA', 'DL', 'AS', 'B6', 'WN', 'BA', 'LH', 'AF', 'KL', 'EK', 'SQ', 'QF', 'AC', 'NH'];
+
+/**
+ * Generate a plausible offer set: prices are lognormal-ish, duration tracks a
+ * synthetic distance, and stops correlate with cheaper fares. Realistic enough
+ * that filter selectivity in benchmarks resembles real traffic.
+ */
+function generateOffers(rowCount        , seed = 1)            {
   const rand = mulberry32(seed);
-  const columns = Object.create(null);
-  for (const [name, type] of OFFER_SCHEMA) columns[name] = alloc(type, rowCount);
-  const { depMin, arrMin, durationMin, priceCents, stops, carrierId, originId, destId } = columns;
-  const DAYS = 60;
+  const columns                             = Object.create(null);
+  for (const { name, type } of OFFER_SCHEMA) columns[name] = allocColumn(type, rowCount);
+
+  const depMin = columns.depMin              ;
+  const arrMin = columns.arrMin              ;
+  const durationMin = columns.durationMin               ;
+  const priceCents = columns.priceCents               ;
+  const stops = columns.stops              ;
+  const carrierId = columns.carrierId              ;
+  const originId = columns.originId               ;
+  const destId = columns.destId               ;
+
+  const DAYS = 60; // a two-month shopping window
+
   for (let i = 0; i < rowCount; i++) {
     let o = (rand() * AIRPORTS.length) | 0;
     let d = (rand() * AIRPORTS.length) | 0;
     if (d === o) d = (d + 1) % AIRPORTS.length;
+
+    // Stand-in for great-circle distance: index gap wrapped into a range.
     const gap = Math.abs(o - d);
     const baseDuration = 70 + gap * 38 + rand() * 240;
+
     const stopCount = rand() < 0.42 ? 0 : rand() < 0.8 ? 1 : 2;
     const duration = Math.min(65535, Math.round(baseDuration + stopCount * (90 + rand() * 150)));
+
     const day = (rand() * DAYS) | 0;
     const depart = day * 1440 + ((rand() * 1440) | 0);
+
+    // Nonstops cost more per minute; long tail on the top end. The stop
+    // discount is multiplicative so short two-stop hops stay positive instead
+    // of clamping to a floor and producing thousands of identical fares.
     const base = (4000 + baseDuration * 34) * (1 - 0.13 * stopCount);
     const price = Math.round(base * Math.exp(rand() * 1.15));
-    originId[i] = o; destId[i] = d; carrierId[i] = (rand() * CARRIERS.length) | 0;
-    stops[i] = stopCount; durationMin[i] = duration;
-    depMin[i] = depart; arrMin[i] = depart + duration; priceCents[i] = price;
+
+    originId[i] = o;
+    destId[i] = d;
+    carrierId[i] = (rand() * CARRIERS.length) | 0;
+    stops[i] = stopCount;
+    durationMin[i] = duration;
+    depMin[i] = depart;
+    arrMin[i] = depart + duration;
+    priceCents[i] = price;
   }
-  return { rowCount, baseDayEpoch: 20000, columns, dicts: { airports: AIRPORTS, carriers: CARRIERS }, schema: OFFER_SCHEMA };
+
+  return {
+    rowCount,
+    baseDayEpoch: 20000, // 2024-10-04; arbitrary but fixed for reproducibility
+    columns,
+    dicts: { airports: AIRPORTS.slice(), carriers: CARRIERS.slice() },
+    schema: OFFER_SCHEMA,
+  };
 }
 </script>
 

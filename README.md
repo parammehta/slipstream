@@ -73,7 +73,10 @@ src/core/
   bitset.ts      membership bitsets
   synth.ts       seeded synthetic offers for tests and benchmarks
 demo/
-  index.html     self-contained UI with the engine inlined
+  index.template.html  markup, styles, and the UI script
+  index.html           GENERATED — template + src/core inlined
+scripts/
+  build-demo.ts        inlines src/core into the template
 ```
 
 Everything under `src/core` is dependency-free and runs unchanged in a Worker
@@ -84,26 +87,39 @@ or in Node.
 `demo/index.html` is one self-contained file — the engine inlined, 500,000
 synthetic offers generated in the browser, a virtualized timetable, live
 histogram sliders, and a HUD reporting real measured query and paint times.
-No build step; open the file.
+It is committed, so opening the file directly still works.
+
+It is **generated**, not hand-maintained. ES module imports are blocked for
+`file://` origins, so a page split across modules would only work over HTTP —
+which is why the engine is inlined. Rather than keep a second copy of it by
+hand, `scripts/build-demo.ts` strips the types from `src/core/*.ts` (using
+Node's built-in `stripTypeScriptTypes`, so the build has no dependencies) and
+injects them into `demo/index.template.html`.
+
+Edit the engine in `src/core` and run `npm run build:demo`. `npm test` fails
+if the committed file is stale, so the two cannot drift.
 
 ## Running it
 
 Requires Node 24+ (native TypeScript stripping, `node:test`). No install step.
 
 ```bash
-npm test
+npm test               # 44 tests, including the demo staleness check
 npm run bench          # or: node scripts/bench.ts 5000000
+npm run build:demo     # regenerate demo/index.html from src/core
+npm run check:demo     # verify it is current without writing
 ```
 
 ## Roadmap
 
 1. ~~Slab format, filter/sort/histogram kernels, benchmarks~~ — done
 2. ~~Results UI: virtualized list, live histogram sliders, frame-timing overlay~~ — done
-3. Harvester: scheduled worker against Amadeus Self-Service, Parquet output
-4. Worker wrapper: move the engine off the main thread
-5. Multi-city legs + the flexible-date price grid
-6. URL state: read the hash back on load, not just write it
-7. Write-up: benchmarks, format comparison, profiler traces
+3. ~~Generate the demo from `src/core` so the engine has one source of truth~~ — done
+4. Harvester: scheduled worker against Amadeus Self-Service, Parquet output
+5. Worker wrapper: move the engine off the main thread
+6. Multi-city legs + the flexible-date price grid
+7. URL state: read the hash back on load, not just write it
+8. Write-up: benchmarks, format comparison, profiler traces
 
 ## Design notes
 

@@ -2,6 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "demo",
   "installCommand": "echo 'no dependencies'",
-  "buildCommand": "echo 'static site; nothing to build'",
+  "buildCommand": "node --disable-warning=ExperimentalWarning scripts/build-demo.ts",
   "cleanUrls": true
 }
