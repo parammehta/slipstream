@@ -368,9 +368,50 @@ figcaption {
     <b>The size surprise.</b> I assumed compression would shrink this a lot. Brotli at
     maximum quality gets <b>1.9&times;</b>, not the 3&times; I expected: packed binary columns are
     high-entropy and there is little left to find. A million offers is 9.86MB on the wire.
-    That number, not the raw size, is what decides you shard the file per origin airport
-    rather than shipping one global slab.
+    That number, not the raw size, is what decided how it ships.
   </div>
+</section>
+
+<section>
+  <div class="eyebrow"><span class="measure">9.4MB &rarr; 100KB</span><span class="rule"></span></div>
+  <h2>How a million offers reach you</h2>
+  <p>
+    Two changes take the download from most of a feature film to something you would not
+    notice, and neither touches the engine.
+  </p>
+  <p>
+    <strong>Sort before encoding.</strong> Rows arrive in whatever order they were
+    generated, which is the worst case for a compressor. Sorting by origin, destination
+    and departure puts equal values next to each other and leaves small deltas behind
+    them. The corpus goes from 9.4MB compressed to <strong>5.9MB</strong> for the cost of
+    a sort nobody waits for, since it happens at build time.
+  </p>
+  <p>
+    <strong>Publish one file per origin.</strong> Nobody searches every airport at once.
+    The corpus is partitioned into 90 shards, and a visitor fetches the one covering their
+    origin: 219KB raw, around 100KB over the wire. Picking a different origin fetches a
+    different file. A multi-city trip fetches the shard each leg departs from and
+    concatenates them, which the kernels never notice.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>What actually crosses the wire, measured on the deployed site</caption>
+      <thead>
+        <tr><th>Request</th><th class="num">Raw</th><th class="num">Transferred</th></tr>
+      </thead>
+      <tbody>
+        <tr><th>Manifest (airports, airlines, shard index)</th><td class="num">8.8KB</td><td class="num">3KB</td></tr>
+        <tr><th>Smallest shard &mdash; Allentown</th><td class="num">9.6KB</td><td class="num">5KB</td></tr>
+        <tr class="hi"><th>Busiest shard &mdash; Orlando, 60,612 offers</th><td class="num">1,215KB</td><td class="num">545KB</td></tr>
+        <tr><th>One global file instead</th><td class="num">19.3MB</td><td class="num">9.4MB</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The files are static and immutable, so a CDN serves them and there is still nothing on
+    the request path. Opened straight from disk there is nothing to fetch at all, and the
+    page generates its offers in-process instead &mdash; the engine cannot tell which happened.
+  </p>
 </section>
 
 <section>
@@ -606,9 +647,9 @@ figcaption {
     fails the build if the two drift.
   </p>
   <p>
-    It generates 500,000 offers over the harvested markets, filters and sorts and charts them
+    It fetches the shard for your origin, then filters and sorts and charts those offers
     locally, builds multi-city itineraries, and encodes every view into a shareable link.
-    While you use it, it makes no network requests at all.
+    After the file lands, it makes no network requests at all.
   </p>
 
   <div class="closing">

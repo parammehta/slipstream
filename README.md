@@ -134,6 +134,7 @@ src/core/
   histogram.ts   binning over the current selection
   query.ts       windowed materialization for the virtual list
   combine.ts     top-k itineraries over a frontier heap
+  concat.ts      joins shards into one slab
   bitset.ts      membership bitsets
   markets.ts     GENERATED — harvested markets and their fare curves
   offers.ts      offers sampled from real fare curves
@@ -152,8 +153,10 @@ demo/
   landing.template.html   the landing page and write-up
   index.html              GENERATED — the landing page
   search/index.html       GENERATED — the search, engine inlined
+demo/data/                GENERATED — one slab per origin, plus a manifest
 scripts/
   build-demo.ts           inlines src/core into the template
+  build-slabs.ts          partitions the corpus into per-origin shards
 ```
 
 Everything under `src/core` is dependency-free and runs unchanged in a Worker
@@ -217,6 +220,32 @@ histogram per market takes a few megabytes.
 second source (an affiliate fare feed, say) implements `run()` and everything
 downstream is shared.
 
+## How it ships
+
+One global file would be a 9.4MB download to search a single route, so the
+corpus is partitioned into **90 shards, one per origin airport**. The page
+fetches a manifest, then the shard covering the origin you pick — around
+100KB over the wire. Changing origin fetches a different file; a multi-city
+trip fetches the shard each leg departs from and `concatSlabs` joins them, so
+the kernels never learn the corpus was split.
+
+Rows inside a shard are sorted by destination then departure before encoding.
+Random order is the worst case for a compressor, and sorting takes the corpus
+from 9.4MB to **5.9MB** compressed at no runtime cost.
+
+Measured on the deployed site:
+
+| Request | Raw | Transferred |
+| --- | ---: | ---: |
+| Manifest | 8.8KB | 3KB |
+| Smallest shard (ABE) | 9.6KB | 5KB |
+| Busiest shard (MCO, 60,612 offers) | 1,215KB | 545KB |
+| One global file instead | 19.3MB | 9.4MB |
+
+Shards are generated at build time, not committed, so the repository does not
+carry 19MB of derived binaries. Opened from disk there is nothing to fetch and
+the page generates offers in-process instead.
+
 ## The demo
 
 `demo/search/index.html` is one self-contained file — the engine inlined, 500,000
@@ -256,8 +285,10 @@ Requires Node 24+ (native TypeScript stripping, `node:test`). No install step.
 ```bash
 npm test               # 125 tests, including the demo staleness check
 npm run bench          # or: node scripts/bench.ts 5000000
-npm run build:demo     # regenerate demo/index.html from src/core
-npm run check:demo     # verify it is current without writing
+npm run build:demo     # regenerate the pages from src/core
+npm run build:slabs    # partition the corpus into demo/data
+npm run build          # both
+npm run check:demo     # verify the pages are current without writing
 ```
 
 `npm test` and `npm run bench` need no dependencies. `npm run typecheck` does
@@ -278,6 +309,10 @@ discovered at runtime.
 9. ~~Write-up: benchmarks, format comparison, the assumptions that measurement
    overturned~~ — done; it is the site's landing page
    (`demo/landing.template.html`)
+10. ~~Ship the corpus as per-origin shards instead of generating it in the
+    page~~ — done (see [How it ships](#how-it-ships))
+11. Range requests: fetch only the columns a filter needs
+12. International fares, once a provider's display terms allow it
 
 ## Design notes
 
