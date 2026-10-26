@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { handleMessage } from '../src/worker/engine-worker.ts';
 
 /** The engine is stateful: init once, then reuse across these tests. */
-const ready = handleMessage({ type: 'init', rows: 60_000, seed: 3 }).reply;
+const ready = (await handleMessage({ type: 'init', rows: 60_000, seed: 3 })).reply;
 
 test('init reports a usable dataset', () => {
   assert.equal(ready.type, 'ready');
@@ -16,12 +16,12 @@ test('init reports a usable dataset', () => {
   assert.match(ready.period, /\d{4}/);
 });
 
-test('ping answers before any heavy work', () => {
-  assert.equal(handleMessage({ type: 'ping' }).reply.type, 'pong');
+test('ping answers before any heavy work', async () => {
+  assert.equal((await handleMessage({ type: 'ping' })).reply.type, 'pong');
 });
 
-test('an unfiltered query returns every row', () => {
-  const { reply } = handleMessage({
+test('an unfiltered query returns every row', async () => {
+  const { reply } = await handleMessage({
     type: 'query', id: 1, filters: [], day: -1, sortKey: 'priceCents', offset: 0, limit: 10,
   });
   assert.equal(reply.type, 'result');
@@ -31,8 +31,8 @@ test('an unfiltered query returns every row', () => {
   assert.ok(reply.gridExtent.filled > 0);
 });
 
-test('results come back sorted by the requested key', () => {
-  const { reply } = handleMessage({
+test('results come back sorted by the requested key', async () => {
+  const { reply } = await handleMessage({
     type: 'query', id: 2, filters: [], day: -1, sortKey: 'priceCents', offset: 0, limit: 20,
   });
   const PRICE = 3; // index into ROW_FIELDS
@@ -45,8 +45,8 @@ test('results come back sorted by the requested key', () => {
   }
 });
 
-test('a day filter restricts results to that day', () => {
-  const { reply } = handleMessage({
+test('a day filter restricts results to that day', async () => {
+  const { reply } = await handleMessage({
     type: 'query', id: 3, filters: [], day: 11, sortKey: 'priceCents', offset: 0, limit: 25,
   });
   const FIELDS = ready.rowFields.length;
@@ -56,16 +56,16 @@ test('a day filter restricts results to that day', () => {
   assert.ok(reply.count < 60_000);
 });
 
-test('the date grid ignores the day filter', () => {
-  const withDay = handleMessage({
+test('the date grid ignores the day filter', async () => {
+  const withDay = (await handleMessage({
     type: 'query', id: 4, filters: [], day: 11, sortKey: 'priceCents', offset: 0, limit: 1,
-  }).reply;
+  })).reply;
   assert.ok(withDay.gridExtent.filled > 1, 'picking a day blanked the rest of the grid');
 });
 
-test('multi-city returns whole trips, cheapest first', () => {
+test('multi-city returns whole trips, cheapest first', async () => {
   const origins = [0, 1];
-  const { reply } = handleMessage({
+  const { reply } = await handleMessage({
     type: 'multiQuery', id: 5, k: 20, shared: [],
     legs: origins.map((o) => ({ filters: [{ kind: 'oneOf', column: 'originId', values: [o] }] })),
   });
@@ -74,11 +74,10 @@ test('multi-city returns whole trips, cheapest first', () => {
   assert.ok(reply.count > 0);
   for (let i = 1; i < reply.count; i++) {
     assert.ok(reply.totals[i] >= reply.totals[i - 1], 'trips are not ascending by total');
-  }
-});
+  }});
 
-test('each trip leg honours its own filter', () => {
-  const { reply } = handleMessage({
+test('each trip leg honours its own filter', async () => {
+  const { reply } = await handleMessage({
     type: 'multiQuery', id: 6, k: 10, shared: [],
     legs: [
       { filters: [{ kind: 'oneOf', column: 'originId', values: [0] }] },
@@ -95,8 +94,8 @@ test('each trip leg honours its own filter', () => {
   }
 });
 
-test('the trip total equals the sum of its legs', () => {
-  const { reply } = handleMessage({
+test('the trip total equals the sum of its legs', async () => {
+  const { reply } = await handleMessage({
     type: 'multiQuery', id: 7, k: 8, shared: [],
     legs: [
       { filters: [{ kind: 'oneOf', column: 'originId', values: [0] }] },
@@ -113,8 +112,8 @@ test('the trip total equals the sum of its legs', () => {
   }
 });
 
-test('shared filters apply to every leg', () => {
-  const { reply } = handleMessage({
+test('shared filters apply to every leg', async () => {
+  const { reply } = await handleMessage({
     type: 'multiQuery', id: 8, k: 10,
     shared: [{ kind: 'oneOf', column: 'stops', values: [0] }],
     legs: [{ filters: [] }, { filters: [] }],
@@ -126,8 +125,8 @@ test('shared filters apply to every leg', () => {
   }
 });
 
-test('an unflyable leg yields no trips rather than a partial one', () => {
-  const { reply } = handleMessage({
+test('an unflyable leg yields no trips rather than a partial one', async () => {
+  const { reply } = await handleMessage({
     type: 'multiQuery', id: 9, k: 10, shared: [],
     legs: [
       { filters: [] },
@@ -138,6 +137,12 @@ test('an unflyable leg yields no trips rather than a partial one', () => {
   assert.equal(reply.legCounts[1], 0);
 });
 
-test('an unknown message is reported, not silently dropped', () => {
-  assert.equal(handleMessage({ type: 'nonsense' }).reply.type, 'error');
+test('an unknown message is reported, not silently dropped', async () => {
+  assert.equal((await handleMessage({ type: 'nonsense' })).reply.type, 'error');
+});
+
+test('a fetch init with no origins fails cleanly', async () => {
+  const { reply } = await handleMessage({ type: 'init', source: 'fetch', origins: [] });
+  assert.equal(reply.type, 'error');
+  assert.match(reply.message, /at least one origin/);
 });

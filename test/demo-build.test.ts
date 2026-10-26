@@ -26,7 +26,7 @@ test('demo/search/index.html is in sync with src/core', () => {
 
 test('the generated engine declares its full surface', () => {
   for (const sym of REQUIRED) {
-    const declared = new RegExp(`^(?:function|const|let)\\s+${sym}\\b`, 'm');
+    const declared = new RegExp(`^(?:async\\s+)?(?:function|const|let)\\s+${sym}\\b`, 'm');
     assert.ok(declared.test(committed), `engine never declares ${sym}`);
   }
 });

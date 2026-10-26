@@ -2,6 +2,7 @@ import { encodeSlab } from '../core/encode.ts';
 import { decodeSlab } from '../core/decode.ts';
 import { generateOffersFromMarkets } from '../core/offers.ts';
 import { marketDataset } from '../core/markets.ts';
+import { concatSlabs } from '../core/concat.ts';
 import { applyFilters, refineSelection, createScratch, type Filter, type Selection } from '../core/filter.ts';
 import { argsortColumn } from '../core/sort.ts';
 import { histogram } from '../core/histogram.ts';
@@ -49,13 +50,50 @@ function percentile(column: { [i: number]: number }, order: Uint32Array, p: numb
   return column[order[Math.min(order.length - 1, Math.floor(order.length * p))]];
 }
 
-function init(rowCount: number, seed: number) {
+/**
+ * Build the corpus, either by generating it or by fetching published shards.
+ *
+ * Generating keeps the tests and the benchmark free of a network; fetching is
+ * what the page does. Both end at the same slab, so nothing downstream knows
+ * which happened.
+ */
+async function loadSlab(msg: {
+  source?: string;
+  rows?: number;
+  seed?: number;
+  origins?: string[];
+  baseUrl?: string;
+}): Promise<Slab> {
+  if (msg.source === 'fetch') {
+    const origins = msg.origins ?? [];
+    if (origins.length === 0) throw new Error('init: fetch needs at least one origin');
+    const base = (msg.baseUrl ?? '') + '/data/';
+
+    const buffers = await Promise.all(
+      origins.map(async (iata) => {
+        const res = await fetch(base + iata + '.slab');
+        if (!res.ok) throw new Error(`init: ${iata}.slab returned HTTP ${res.status}`);
+        return res.arrayBuffer();
+      }),
+    );
+    return concatSlabs(buffers.map(decodeSlab));
+  }
+
+  const rowCount = msg.rows ?? 500_000;
+  return decodeSlab(encodeSlab(generateOffersFromMarkets(marketDataset(), rowCount, msg.seed ?? 1)));
+}
+
+async function init(msg: {
+  source?: string;
+  rows?: number;
+  seed?: number;
+  origins?: string[];
+  baseUrl?: string;
+}) {
   const t0 = performance.now();
-  const dataset = marketDataset();
-  const buf = encodeSlab(generateOffersFromMarkets(dataset, rowCount, seed));
+  slab = await loadSlab(msg);
   const built = performance.now();
 
-  slab = decodeSlab(buf);
   scratch = createScratch(slab.rowCount);
   scratchB = createScratch(slab.rowCount);
   legScratch = Array.from({ length: MAX_LEGS }, () => createScratch(slab.rowCount));
@@ -73,7 +111,6 @@ function init(rowCount: number, seed: number) {
   priceDomain = [price[orders.priceCents[0]], percentile(price, orders.priceCents, 0.99)];
   durDomain = [dur[orders.durationMin[0]], percentile(dur, orders.durationMin, 0.99)];
 
-  // Backdrop series cover every row and never change: compute them once.
   priceBackdrop = histogram(price, null, priceDomain[0], priceDomain[1], HIST_BINS);
   durBackdrop = histogram(dur, null, durDomain[0], durDomain[1], HIST_BINS);
 
@@ -87,8 +124,6 @@ function init(rowCount: number, seed: number) {
     byteLength: slab.byteLength,
     baseDayEpoch: slab.baseDayEpoch,
     dicts: slab.dicts,
-    // The page needs the sentinel to spot empty days; sending it keeps the
-    // constant defined in exactly one place.
     noValue: NO_VALUE,
     days: DAY_BUCKETS,
     bins: HIST_BINS,
@@ -265,7 +300,7 @@ function windowOnly(msg: { offset: number; limit: number }) {
 // ArrayBufferLike, not ArrayBuffer: a typed array's `.buffer` may be a
 // SharedArrayBuffer as far as the type system knows, and postMessage accepts
 // either.
-export function handleMessage(msg: any): { reply: any; transfer: ArrayBufferLike[] } {
+export async function handleMessage(msg: any): Promise<{ reply: any; transfer: ArrayBufferLike[] }> {
   if (msg.type === 'ping') {
     // Proves the bundle loaded and is executing. Sent before `init` so the
     // page can tell "worker is broken" from "worker is busy building", which
@@ -273,8 +308,11 @@ export function handleMessage(msg: any): { reply: any; transfer: ArrayBufferLike
     return { reply: { type: 'pong' }, transfer: [] };
   }
   if (msg.type === 'init') {
-    const ready = init(msg.rows, msg.seed);
-    return { reply: ready, transfer: [] };
+    try {
+      return { reply: await init(msg), transfer: [] };
+    } catch (err) {
+      return { reply: { type: 'error', message: (err as Error).message }, transfer: [] };
+    }
   }
   if (msg.type === 'query') {
     const r = query(msg);

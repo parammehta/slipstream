@@ -267,6 +267,20 @@ body {
   align-self: stretch; display: flex; flex-direction: column; justify-content: center;
 }
 .trip-total b { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.loading {
+  position: absolute; inset: 0; display: flex; gap: .6rem;
+  align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--ground) 86%, transparent);
+  color: var(--ink-body); font-size: 12px; z-index: 5;
+}
+.spinner {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid var(--line-strong); border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
 .empty-trips {
   padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px;
 }
@@ -555,6 +569,10 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
         </div>
       </div>
       <div class="trips" id="trips"></div>
+      <div class="loading" id="loading" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="mono" id="loadingText">Fetching…</span>
+      </div>
       <div class="foot">
         <span>Shareable state</span>
         <span class="url mono" id="urlState">#</span>
@@ -1731,13 +1749,42 @@ function percentile(column                         , order             , p      
   return column[order[Math.min(order.length - 1, Math.floor(order.length * p))]];
 }
 
-function init(rowCount        , seed        ) {
+/**
+ * Build the corpus, either by generating it or by fetching published shards.
+ *
+ * Generating keeps the tests and the benchmark free of a network; fetching is
+ * what the page does. Both end at the same slab, so nothing downstream knows
+ * which happened.
+ */
+async function loadSlab(msg
+
+ )                {
+  if (msg.source === 'fetch') {
+    const origins = msg.origins ?? [];
+    if (origins.length === 0) throw new Error('init: fetch needs at least one origin');
+    const base = (msg.baseUrl ?? '') + '/data/';
+
+    const buffers = await Promise.all(
+      origins.map(async (iata) => {
+        const res = await fetch(base + iata + '.slab');
+        if (!res.ok) throw new Error(`init: ${iata}.slab returned HTTP ${res.status}`);
+        return res.arrayBuffer();
+      }),
+    );
+    return concatSlabs(buffers.map(decodeSlab));
+  }
+
+  const rowCount = msg.rows ?? 500_000;
+  return decodeSlab(encodeSlab(generateOffersFromMarkets(marketDataset(), rowCount, msg.seed ?? 1)));
+}
+
+async function init(msg
+
+ ) {
   const t0 = performance.now();
-  const dataset = marketDataset();
-  const buf = encodeSlab(generateOffersFromMarkets(dataset, rowCount, seed));
+  slab = await loadSlab(msg);
   const built = performance.now();
 
-  slab = decodeSlab(buf);
   scratch = createScratch(slab.rowCount);
   scratchB = createScratch(slab.rowCount);
   legScratch = Array.from({ length: MAX_LEGS }, () => createScratch(slab.rowCount));
@@ -1755,7 +1802,6 @@ function init(rowCount        , seed        ) {
   priceDomain = [price[orders.priceCents[0]], percentile(price, orders.priceCents, 0.99)];
   durDomain = [dur[orders.durationMin[0]], percentile(dur, orders.durationMin, 0.99)];
 
-  // Backdrop series cover every row and never change: compute them once.
   priceBackdrop = histogram(price, null, priceDomain[0], priceDomain[1], HIST_BINS);
   durBackdrop = histogram(dur, null, durDomain[0], durDomain[1], HIST_BINS);
 
@@ -1769,8 +1815,6 @@ function init(rowCount        , seed        ) {
     byteLength: slab.byteLength,
     baseDayEpoch: slab.baseDayEpoch,
     dicts: slab.dicts,
-    // The page needs the sentinel to spot empty days; sending it keeps the
-    // constant defined in exactly one place.
     noValue: NO_VALUE,
     days: DAY_BUCKETS,
     bins: HIST_BINS,
@@ -1941,7 +1985,7 @@ function windowOnly(msg                                   ) {
 // ArrayBufferLike, not ArrayBuffer: a typed array's `.buffer` may be a
 // SharedArrayBuffer as far as the type system knows, and postMessage accepts
 // either.
-function handleMessage(msg     )                                              {
+async function handleMessage(msg     )                                                       {
   if (msg.type === 'ping') {
     // Proves the bundle loaded and is executing. Sent before `init` so the
     // page can tell "worker is broken" from "worker is busy building", which
@@ -1949,8 +1993,11 @@ function handleMessage(msg     )                                              {
     return { reply: { type: 'pong' }, transfer: [] };
   }
   if (msg.type === 'init') {
-    const ready = init(msg.rows, msg.seed);
-    return { reply: ready, transfer: [] };
+    try {
+      return { reply: await init(msg), transfer: [] };
+    } catch (err) {
+      return { reply: { type: 'error', message: (err         ).message }, transfer: [] };
+    }
   }
   if (msg.type === 'query') {
     const r = query(msg);
@@ -1978,8 +2025,9 @@ function handleMessage(msg     )                                              {
 const ROW_FIELD_COUNT = ROW_FIELDS.length;
 
 self.onmessage = (event) => {
-  const out = handleMessage(event.data);
-  self.postMessage(out.reply, out.transfer);
+  Promise.resolve(handleMessage(event.data)).then((out) => {
+    self.postMessage(out.reply, out.transfer);
+  });
 };
 </script>
 
@@ -2019,6 +2067,9 @@ const MAX_SPACER_PX = 16000000;
 
 let host, engineMode = "worker";
 let meta = null;            // the engine's ready payload
+let manifest = null;        // published shards, or null when generating
+let loadedOrigins = [];     // IATA codes currently in the engine
+let booted = false;
 let AIRPORTS = [], CARRIERS = [];
 let priceDomain, durDomain;
 let NO_VALUE = 0xffffffff;  // replaced by the engine's own sentinel on ready
@@ -2077,6 +2128,38 @@ function makeInlineHost(source, onMessage) {
 }
 
 /* ---------- boot ---------- */
+/**
+ * Root-absolute: the search is served both as /search and /search/, and a
+ * relative path resolves differently under each.
+ */
+const DATA_BASE = "/data/";
+
+/**
+ * The corpus is published as one slab per origin airport. The page fetches
+ * the manifest, then the shards it needs. Opened straight from disk there is
+ * nothing to fetch, so it falls back to generating the offers in-process —
+ * the engine cannot tell the difference.
+ */
+async function loadManifest() {
+  try {
+    const res = await fetch(DATA_BASE + "manifest.json", { cache: "force-cache" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const parsed = await res.json();
+    if (!parsed.shards || !parsed.shards.length) throw new Error("no shards");
+    return parsed;
+  } catch (_) {
+    return null; // file:// or no published data; generate instead
+  }
+}
+
+/** Message that tells the engine what corpus to build. */
+function initMessage(origins) {
+  if (!manifest) return { type: "init", rows: ROWS, seed: 1 };
+  // Absolute: the worker is created from a blob: URL, which gives it no
+  // origin to resolve a root-relative path against.
+  return { type: "init", source: "fetch", origins, baseUrl: location.origin };
+}
+
 function boot() {
   const msg = $("bootMsg");
   const source = $("engine-source").textContent;
@@ -2098,8 +2181,10 @@ function boot() {
       readyTimer = setTimeout(() => failover("worker never answered"), 3000);
       host.post({ type: "ping" });
     }
-    msg.textContent = "generating " + ROWS.toLocaleString() + " offers…";
-    host.post({ type: "init", rows: ROWS, seed: 1 });
+    msg.textContent = manifest
+      ? "fetching " + loadedOrigins.join(", ") + "…"
+      : "generating " + ROWS.toLocaleString() + " offers…";
+    host.post(initMessage(loadedOrigins));
   };
 
   let readyTimer = 0;
@@ -2112,15 +2197,21 @@ function boot() {
     start("inline");
   }
 
-  try {
-    if (FORCE_INLINE) throw new Error("forced inline");
-    if (typeof Worker !== "function" || typeof URL.createObjectURL !== "function") {
-      throw new Error("no worker support");
+  loadManifest().then((found) => {
+    manifest = found;
+    // Start on the busiest origin: one shard, a fast first paint, and a
+    // realistic starting point since nobody searches every airport at once.
+    loadedOrigins = found ? [found.shards[0].iata] : [];
+    try {
+      if (FORCE_INLINE) throw new Error("forced inline");
+      if (typeof Worker !== "function" || typeof URL.createObjectURL !== "function") {
+        throw new Error("no worker support");
+      }
+      start("worker");
+    } catch (_) {
+      start("inline");
     }
-    start("worker");
-  } catch (_) {
-    start("inline");
-  }
+  });
 
   onPong = () => clearTimeout(readyTimer);
   onReady = () => {
@@ -2154,16 +2245,42 @@ function onEngineMessage(msg) {
     NO_VALUE = msg.noValue;
     priceDomain = msg.priceDomain;
     durDomain = msg.durDomain;
+    // Each shard has its own fare and duration range, so the sliders are
+    // reset to the new corpus rather than carrying the old one's bounds.
     state.price = priceDomain.slice();
     state.dur = durDomain.slice();
-    state.stops = new Set([0, 1, 2]);
-    state.carriers = new Set(CARRIERS.map((_, i) => i));
 
-    buildDateLabels();
-    buildControls();
-    // Domains must exist first: incoming ranges are clamped against them.
-    if (readUrlState()) syncControlsFromState();
-    onReady();
+    if (!booted) {
+      booted = true;
+      state.stops = new Set([0, 1, 2]);
+      state.carriers = new Set(CARRIERS.map((_, i) => i));
+      buildDateLabels();
+      buildControls();
+      // Domains must exist first: incoming ranges are clamped against them.
+      if (readUrlState()) syncControlsFromState();
+      onReady();
+      // The link may name an origin we have not fetched, and a link with no
+      // origin must still agree with whichever shard we started on.
+      if (manifest) {
+        if (state.origin >= 0 && !loadedOrigins.includes(AIRPORTS[state.origin])) {
+          reloadShards([AIRPORTS[state.origin]]);
+          return;
+        }
+        if (state.origin < 0 && loadedOrigins.length === 1) {
+          state.origin = AIRPORTS.indexOf(loadedOrigins[0]);
+          $("originSelect").value = String(state.origin);
+          $("routeLabel").textContent = routeLabelText();
+        }
+      }
+    } else {
+      state.carriers = new Set(CARRIERS.map((_, i) => i));
+      refreshControls();
+      $("loading").hidden = true;
+    }
+
+    $("totalRows").textContent = msg.rowCount.toLocaleString();
+    priceHist.prime(meta.priceBackdrop);
+    durHist.prime(meta.durBackdrop);
     requestQuery();
     return;
   }
@@ -2197,7 +2314,11 @@ function onEngineMessage(msg) {
     return;
   }
 
-  if (msg.type === "error") console.error("engine:", msg.message);
+  if (msg.type === "error") {
+    console.error("engine:", msg.message);
+    $("loading").hidden = true;
+    $("bootMsg").textContent = "could not load the data: " + msg.message;
+  }
 }
 
 function buildDateLabels() {
@@ -2230,7 +2351,11 @@ const compactMoney = (cents) => {
 function buildFilters() {
   const f = [];
   // Most selective first: each later predicate only re-checks survivors.
-  if (state.origin >= 0) f.push({ kind: "oneOf", column: "originId", values: [state.origin] });
+  // With one shard loaded every row already departs from that airport.
+  const originIsImplied = manifest && loadedOrigins.length === 1;
+  if (state.origin >= 0 && !originIsImplied) {
+    f.push({ kind: "oneOf", column: "originId", values: [state.origin] });
+  }
   if (state.stops.size < 3) f.push({ kind: "oneOf", column: "stops", values: [...state.stops] });
   if (state.carriers.size < CARRIERS.length) {
     f.push({ kind: "oneOf", column: "carrierId", values: [...state.carriers] });
@@ -2283,6 +2408,15 @@ function visibleRange() {
  * user let go.
  */
 function requestQuery() {
+  // A trip's legs may leave from airports in different shards, so make sure
+  // the engine holds all of them before asking it anything.
+  if (manifest && state.mode === "multi") {
+    const needed = state.legs.map((leg) => (leg.origin >= 0 ? AIRPORTS[leg.origin] : null)).filter(Boolean);
+    if (needed.length) {
+      const missing = needed.some((code) => !loadedOrigins.includes(code));
+      if (missing) { reloadShards([...new Set([...loadedOrigins, ...needed])]); return; }
+    }
+  }
   if (inflightId) { queuedQuery = true; return; }
   inflightId = nextMessageId++;
   sentAt = performance.now();
@@ -2593,6 +2727,7 @@ function buildLegControls() {
     const button = e.target.closest(".mode");
     if (!button || button.dataset.mode === state.mode) return;
     setMode(button.dataset.mode);
+    $("routeLabel").textContent = routeLabelText();
     requestQuery();
   });
 }
@@ -2919,21 +3054,19 @@ let priceHist, durHist;
 
 /* ---------- controls ---------- */
 function buildControls() {
-  // Origin
+  // Origin. With published shards this picks which file to download, so it
+  // reloads the corpus rather than filtering one already in memory.
   const sel = $("originSelect");
-  sel.innerHTML = '<option value="-1">All origins</option>';
-  const cities = meta.dicts.cities || [];
-  AIRPORTS.forEach((code, i) => {
-    const o = document.createElement("option");
-    o.value = String(i);
-    o.textContent = cities[i] ? code + " — " + cities[i] : code;
-    sel.appendChild(o);
-  });
-  sel.value = "-1";
+  buildOriginOptions();
+  $("routeLabel").textContent = routeLabelText();
   sel.addEventListener("change", () => {
     state.origin = Number(sel.value);
     $("routeLabel").textContent = routeLabelText();
-    requestQuery();
+    if (manifest) {
+      reloadShards(state.origin < 0 ? allShardCodes() : [AIRPORTS[state.origin]]);
+    } else {
+      requestQuery();
+    }
   });
 
   priceHist = makeRangeControl({
@@ -2957,9 +3090,6 @@ function buildControls() {
   buildCalendar();
   renderLegs();
   buildLegControls();
-
-  priceHist.prime(meta.priceBackdrop);
-  durHist.prime(meta.durBackdrop);
 
   // Stops
   $("stopChips").addEventListener("click", (e) => {
@@ -3012,6 +3142,11 @@ function buildControls() {
 
   $("resetBtn").addEventListener("click", () => {
     resetFilterState();
+    // Keep the loaded shard: resetting filters should not turn into a 19MB
+    // download of every origin.
+    if (manifest && loadedOrigins.length === 1) {
+      state.origin = AIRPORTS.indexOf(loadedOrigins[0]);
+    }
     syncControlsFromState();
     priceHist.refreshDomain();
     durHist.refreshDomain();
@@ -3191,8 +3326,82 @@ function readUrlState() {
   return true;
 }
 
+/** Every published shard, busiest first. */
+function allShardCodes() {
+  return manifest ? manifest.shards.map((entry) => entry.iata) : [];
+}
+
+function shardFor(iata) {
+  return manifest ? manifest.shards.find((entry) => entry.iata === iata) : null;
+}
+
+/**
+ * Options are the published shards, each labelled with what it costs to
+ * fetch, because picking one here means a download.
+ */
+function buildOriginOptions() {
+  const sel = $("originSelect");
+  const cities = meta.dicts.cities || [];
+  if (!manifest) {
+    sel.innerHTML = '<option value="-1">All origins</option>' +
+      AIRPORTS.map((code, i) =>
+        '<option value="' + i + '">' + code + (cities[i] ? " — " + cities[i] : "") + "</option>").join("");
+    sel.value = String(state.origin);
+    return;
+  }
+
+  const totalMb = manifest.shards.reduce((sum, entry) => sum + entry.bytes, 0) / 1048576;
+  let html = '<option value="-1">All origins — ' + totalMb.toFixed(0) + "MB download</option>";
+  for (const entry of manifest.shards) {
+    const i = AIRPORTS.indexOf(entry.iata);
+    if (i < 0) continue;
+    html += '<option value="' + i + '">' + entry.iata +
+      (cities[i] ? " — " + cities[i] : "") +
+      " · " + entry.rows.toLocaleString() + " offers</option>";
+  }
+  sel.innerHTML = html;
+  const current = loadedOrigins.length === 1 ? AIRPORTS.indexOf(loadedOrigins[0]) : -1;
+  state.origin = current;
+  sel.value = String(current);
+}
+
+/** Reloads the engine with a different set of shards. */
+function reloadShards(origins) {
+  const wanted = [...new Set(origins)].filter(Boolean);
+  if (wanted.length === 0) return;
+  const same = wanted.length === loadedOrigins.length &&
+    wanted.every((code) => loadedOrigins.includes(code));
+  if (same) { requestQuery(); return; }
+
+  loadedOrigins = wanted;
+  const bytes = wanted.reduce((sum, code) => sum + (shardFor(code)?.bytes ?? 0), 0);
+  $("loadingText").textContent =
+    "Fetching " + wanted.length + (wanted.length === 1 ? " shard" : " shards") +
+    " · " + (bytes / 1048576).toFixed(bytes > 1048576 ? 1 : 2) + "MB";
+  $("loading").hidden = false;
+  inflightId = 0;
+  inflightWindowId = 0;
+  queuedQuery = false;
+  host.post(initMessage(wanted));
+}
+
+/** After a shard change: new carrier counts, new domains, same controls. */
+function refreshControls() {
+  buildOriginOptions();
+  $("routeLabel").textContent = routeLabelText();
+  const counts = meta.carrierCounts;
+  document.querySelectorAll(".carrier").forEach((label, i) => {
+    label.querySelector("input").checked = true;
+    label.querySelector(".n").textContent = (counts[i] / 1000).toFixed(0) + "k";
+  });
+  $("carrierSummary").textContent = "all";
+  priceHist.refreshDomain();
+  durHist.refreshDomain();
+}
+
 /** Describes the current origin against the real size of the route set. */
 function routeLabelText() {
+  if (state.mode === "multi") return "Multi-city \u2192 " + state.legs.length + " legs";
   if (state.origin < 0) return "All US origins \u2192 " + AIRPORTS.length + " airports";
   const city = (meta.dicts.cities || [])[state.origin];
   return AIRPORTS[state.origin] + (city ? " " + city : "") + " \u2192 onward";
