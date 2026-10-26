@@ -38,6 +38,7 @@ export const BUNDLE: ReadonlyArray<{ dir: string; file: string }> = [
   { dir: 'src/core', file: 'format.ts' },
   { dir: 'src/core', file: 'encode.ts' },
   { dir: 'src/core', file: 'decode.ts' },
+  { dir: 'src/core', file: 'concat.ts' },
   { dir: 'src/core', file: 'bitset.ts' },
   { dir: 'src/core', file: 'filter.ts' },
   { dir: 'src/core', file: 'buckets.ts' },
