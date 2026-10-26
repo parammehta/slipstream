@@ -2,13 +2,28 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "demo",
   "installCommand": "echo 'no dependencies'",
-  "buildCommand": "node --disable-warning=ExperimentalWarning scripts/build-demo.ts",
+  "buildCommand": "node --disable-warning=ExperimentalWarning scripts/build-demo.ts && node --disable-warning=ExperimentalWarning scripts/build-slabs.ts",
   "cleanUrls": true,
   "redirects": [
     {
       "source": "/app",
       "destination": "/search",
       "permanent": true
+    }
+  ],
+  "headers": [
+    {
+      "source": "/data/(.*).slab",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/octet-stream"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
     }
   ]
 }

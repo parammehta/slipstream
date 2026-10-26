@@ -4,3 +4,4 @@ dist/
 *.slab
 .DS_Store
 .vercel
+demo/data/

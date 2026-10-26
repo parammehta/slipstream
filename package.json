@@ -12,7 +12,9 @@
     "build:demo": "node --disable-warning=ExperimentalWarning scripts/build-demo.ts",
     "check:demo": "node --disable-warning=ExperimentalWarning scripts/build-demo.ts --check",
     "bench": "node scripts/bench.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:slabs": "node --disable-warning=ExperimentalWarning scripts/build-slabs.ts",
+    "build": "npm run build:demo && npm run build:slabs"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
