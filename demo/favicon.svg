@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Slipstream">
+  <rect width="32" height="32" rx="7" fill="#0C0F15"/>
+  <!-- A departure path: three columns of a slab lifting away. -->
+  <rect x="6" y="20" width="4" height="6" rx="1" fill="#5E87A3"/>
+  <rect x="12" y="16" width="4" height="10" rx="1" fill="#5E87A3"/>
+  <rect x="18" y="11" width="4" height="15" rx="1" fill="#E0682F"/>
+  <circle cx="25.5" cy="8" r="3" fill="#E0682F"/>
+</svg>
