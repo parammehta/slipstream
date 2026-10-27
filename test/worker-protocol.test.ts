@@ -16,6 +16,27 @@ test('init reports a usable dataset', () => {
   assert.match(ready.period, /\d{4}/);
 });
 
+test('init reports the origins it actually holds', () => {
+  assert.ok(Array.isArray(ready.originsLoaded), 'ready carries no originsLoaded');
+  assert.ok(ready.originsLoaded.length > 1, 'a generated corpus spans many origins');
+  for (const code of ready.originsLoaded) {
+    assert.ok(ready.dicts.airports.includes(code), `${code} is not an airport in the dictionary`);
+  }
+});
+
+test('the reported origins are read off the rows, not echoed back', async () => {
+  // Filter to one origin and confirm the engine would describe it correctly.
+  const { reply } = await handleMessage({
+    type: 'query', id: 42, filters: [{ kind: 'oneOf', column: 'originId', values: [0] }],
+    day: -1, sortKey: 'priceCents', offset: 0, limit: 5,
+  });
+  const FIELDS = ready.rowFields.length;
+  const ORIGIN = 6;
+  for (let i = 0; i < reply.rowCount; i++) {
+    assert.equal(reply.rows[i * FIELDS + ORIGIN], 0, 'a row from another origin came back');
+  }
+});
+
 test('ping answers before any heavy work', async () => {
   assert.equal((await handleMessage({ type: 'ping' })).reply.type, 'pong');
 });

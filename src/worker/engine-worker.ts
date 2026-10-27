@@ -166,6 +166,17 @@ async function init(
   const carrierIds = slab.columns.carrierId;
   for (let i = 0; i < slab.rowCount; i++) carrierCounts[carrierIds[i]]++;
 
+  // Which origins are actually in the corpus, read off the rows rather than
+  // echoed back from the request. The page labels itself from this, so a
+  // load that silently returned something else cannot be mislabelled.
+  const originSeen = new Uint8Array(slab.dicts.airports.length);
+  const originIds = slab.columns.originId;
+  for (let i = 0; i < slab.rowCount; i++) originSeen[originIds[i]] = 1;
+  const originsLoaded: string[] = [];
+  for (let i = 0; i < originSeen.length; i++) {
+    if (originSeen[i]) originsLoaded.push(slab.dicts.airports[i]);
+  }
+
   return {
     type: 'ready',
     rowCount: slab.rowCount,
@@ -186,6 +197,7 @@ async function init(
     priceBackdrop,
     durBackdrop,
     carrierCounts,
+    originsLoaded,
     timings: {
       build: built - t0,
       sort: performance.now() - sorted,

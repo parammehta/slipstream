@@ -1927,6 +1927,17 @@ async function init(
   const carrierIds = slab.columns.carrierId;
   for (let i = 0; i < slab.rowCount; i++) carrierCounts[carrierIds[i]]++;
 
+  // Which origins are actually in the corpus, read off the rows rather than
+  // echoed back from the request. The page labels itself from this, so a
+  // load that silently returned something else cannot be mislabelled.
+  const originSeen = new Uint8Array(slab.dicts.airports.length);
+  const originIds = slab.columns.originId;
+  for (let i = 0; i < slab.rowCount; i++) originSeen[originIds[i]] = 1;
+  const originsLoaded           = [];
+  for (let i = 0; i < originSeen.length; i++) {
+    if (originSeen[i]) originsLoaded.push(slab.dicts.airports[i]);
+  }
+
   return {
     type: 'ready',
     rowCount: slab.rowCount,
@@ -1947,6 +1958,7 @@ async function init(
     priceBackdrop,
     durBackdrop,
     carrierCounts,
+    originsLoaded,
     timings: {
       build: built - t0,
       sort: performance.now() - sorted,
@@ -2189,7 +2201,13 @@ const MAX_SPACER_PX = 16000000;
 let host, engineMode = "worker";
 let meta = null;            // the engine's ready payload
 let manifest = null;        // published shards, or null when generating
-let loadedOrigins = [];     // IATA codes currently in the engine
+/**
+ * What the engine actually holds, taken from its ready message, which reads
+ * it off the rows. `pendingOrigins` is only what we asked for: until a load
+ * reports back, the two can differ, and the labels follow the truth.
+ */
+let loadedOrigins = [];
+let pendingOrigins = [];
 let booted = false;
 let AIRPORTS = [], CARRIERS = [];
 let priceDomain, durDomain;
@@ -2315,12 +2333,12 @@ function boot() {
       host.post({ type: "ping" });
     }
     msg.textContent = manifest
-      ? "fetching " + loadedOrigins.join(", ") + "…"
+      ? "fetching " + pendingOrigins.join(", ") + "…"
       : "generating " + ROWS.toLocaleString() + " offers…";
     $("bootSub").textContent = manifest
-      ? "columnar slab · " + (shardFor(loadedOrigins[0])?.rows ?? 0).toLocaleString() + " offers"
+      ? "columnar slab · " + (shardFor(pendingOrigins[0])?.rows ?? 0).toLocaleString() + " offers"
       : "columnar encode · radix argsort";
-    host.post(initMessage(loadedOrigins));
+    host.post(initMessage(pendingOrigins));
   };
 
   let readyTimer = 0;
@@ -2340,7 +2358,8 @@ function boot() {
     // visit downloaded the worst case before showing anything.
     // A shared link names its origin, so start on that shard instead of
     // fetching the default first and replacing it a moment later.
-    loadedOrigins = found ? [originFromHash(found) ?? defaultShard(found).iata] : [];
+    pendingOrigins = found ? [originFromHash(found) ?? defaultShard(found).iata] : [];
+    loadedOrigins = [];
     try {
       if (FORCE_INLINE) throw new Error("forced inline");
       if (typeof Worker !== "function" || typeof URL.createObjectURL !== "function") {
@@ -2377,10 +2396,10 @@ function onEngineMessage(msg) {
     const mb = (msg.total / 1048576).toFixed(1);
     if (!booted) {
       $("bootMsg").textContent =
-        "fetching " + loadedOrigins.join(", ") + " · " + pct + "% of " + mb + "MB";
+        "fetching " + pendingOrigins.join(", ") + " · " + pct + "% of " + mb + "MB";
     } else {
       $("loadingText").textContent =
-        "Fetching " + loadedOrigins.join(", ") + " · " + pct + "%";
+        "Fetching " + pendingOrigins.join(", ") + " · " + pct + "%";
     }
     return;
   }
@@ -2392,6 +2411,10 @@ function onEngineMessage(msg) {
 
   if (msg.type === "ready") {
     meta = msg;
+    // The engine reports what it read off the rows; that is what we are
+    // looking at, whatever we asked for.
+    if (msg.originsLoaded && msg.originsLoaded.length) loadedOrigins = msg.originsLoaded;
+    pendingOrigins = [...loadedOrigins];
     AIRPORTS = msg.dicts.airports;
     CARRIERS = msg.dicts.carriers;
     NO_VALUE = msg.noValue;
@@ -2438,6 +2461,7 @@ function onEngineMessage(msg) {
       }
     }
 
+    reconcileOriginLabel();
     $("totalRows").textContent = msg.rowCount.toLocaleString();
     priceHist.prime(meta.priceBackdrop);
     durHist.prime(meta.durBackdrop);
@@ -2476,8 +2500,16 @@ function onEngineMessage(msg) {
 
   if (msg.type === "error") {
     console.error("engine:", msg.message);
+    clearTimeout(loadWatchdog);
     $("loading").hidden = true;
-    $("bootMsg").textContent = "could not load the data: " + msg.message;
+    if (booted) {
+      // The corpus did not change, so go back to describing the one we have
+      // rather than the one we failed to fetch.
+      pendingOrigins = [...loadedOrigins];
+      reconcileOriginLabel();
+    } else {
+      $("bootMsg").textContent = "could not load the data: " + msg.message;
+    }
   }
 }
 
@@ -3544,9 +3576,30 @@ function buildOriginOptions() {
       " · " + entry.rows.toLocaleString() + " offers</option>";
   }
   sel.innerHTML = html;
-  const current = loadedOrigins.length === 1 ? AIRPORTS.indexOf(loadedOrigins[0]) : -1;
-  state.origin = current;
-  sel.value = String(current);
+  // The selected value is set by reconcileOriginLabel, which reads what the
+  // engine actually loaded. Rebuilding the options must not quietly decide it.
+  sel.value = String(state.origin);
+}
+
+/**
+ * Makes the origin control and the header describe the corpus the engine
+ * actually holds. Called after every load and after a failed one, so the
+ * labels cannot drift from the rows underneath them.
+ */
+function reconcileOriginLabel() {
+  if (!manifest || !booted || loadedOrigins.length === 0) return;
+
+  if (loadedOrigins.length === 1) {
+    const index = AIRPORTS.indexOf(loadedOrigins[0]);
+    if (index >= 0) state.origin = index;
+  } else if (state.mode !== "multi") {
+    // Several shards with nothing to pin them to: say so rather than name one.
+    state.origin = -1;
+  }
+
+  const sel = $("originSelect");
+  if (sel) sel.value = String(state.origin);
+  $("routeLabel").textContent = routeLabelText();
 }
 
 /** Reloads the engine with a different set of shards. */
@@ -3557,7 +3610,7 @@ function reloadShards(origins) {
     wanted.every((code) => loadedOrigins.includes(code));
   if (same) { requestQuery(); return; }
 
-  loadedOrigins = wanted;
+  pendingOrigins = wanted;
   const bytes = wanted.reduce((sum, code) => sum + (shardFor(code)?.bytes ?? 0), 0);
   clearTimeout(loadWatchdog);
   loadWatchdog = setTimeout(() => {
