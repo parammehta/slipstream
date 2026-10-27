@@ -30,8 +30,34 @@ export interface ColumnMeta {
   length: number;
 }
 
+/**
+ * A column the file does not store because it can be rebuilt on arrival.
+ *
+ * Two kinds pay for themselves. A column that holds one value for every row
+ * in the file — origin, in a slab partitioned by origin — and a column that
+ * is the sum of two others, like an arrival time that is always departure
+ * plus duration. Together they are 6 of the 20 bytes a row would otherwise
+ * occupy, and rebuilding them costs a pass over the rows at decode.
+ *
+ * The derivation is deliberately just a sum of two columns rather than an
+ * expression language: a format that can compute anything is a format whose
+ * reader has to be trusted.
+ */
+export interface ConstantColumn {
+  type: DType;
+  value: number;
+}
+
+export interface DerivedColumn {
+  type: DType;
+  /** Names of the two stored columns to add. */
+  from: [string, string];
+}
+
 export interface SlabMeta {
   columns: ColumnMeta[];
+  constants?: Record<string, ConstantColumn>;
+  derived?: Record<string, DerivedColumn>;
   /** Dictionary name -> ordered string values; ids index into this array. */
   dicts: Record<string, string[]>;
   /** Days since the Unix epoch; all minute-based columns are relative to this. */

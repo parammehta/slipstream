@@ -71,7 +71,7 @@ export const EXCLUDED_FROM_BUNDLE: ReadonlyArray<string> = ['index.ts', 'routes.
  */
 const MESSAGE_LOOP = `
 self.onmessage = (event) => {
-  Promise.resolve(handleMessage(event.data)).then((out) => {
+  Promise.resolve(handleMessage(event.data, (m) => self.postMessage(m))).then((out) => {
     self.postMessage(out.reply, out.transfer);
   });
 };

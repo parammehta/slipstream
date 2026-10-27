@@ -16,6 +16,7 @@
  * committed, so the repository does not carry 19MB of derived binaries.
  */
 import { writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { encodeSlab } from '../src/core/encode.ts';
@@ -68,17 +69,28 @@ for (const [originId, rows] of byOrigin) {
     shardColumns[name] = target;
   }
 
+  // Two columns are not stored. Every row in this file departs the same
+  // airport, and arrival is always departure plus duration. Together they
+  // are 6 of the 20 bytes a row would occupy; encodeSlab checks both claims
+  // against the data before leaving them out.
   const buffer = encodeSlab({
     rowCount: rows.length,
     baseDayEpoch: corpus.baseDayEpoch,
     columns: shardColumns,
     dicts: corpus.dicts,
     schema: OFFER_SCHEMA,
+    constants: { originId: { type: 'u16', value: originId } },
+    derived: { arrMin: { type: 'i32', from: ['depMin', 'durationMin'] } },
   });
 
+  // Content-addressed, so the immutable cache header is actually true: a
+  // rebuild changes the name, and a returning visitor cannot be served a
+  // stale shard from a URL whose contents moved under it.
+  const bytes = Buffer.from(buffer);
+  const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 8);
   const iata = dataset.airports[originId].iata;
-  const file = `${iata}.slab`;
-  writeFileSync(join(OUT, file), Buffer.from(buffer));
+  const file = `${iata}-${digest}.slab`;
+  writeFileSync(join(OUT, file), bytes);
   shards.push({ iata, file, rows: rows.length, bytes: buffer.byteLength });
   totalBytes += buffer.byteLength;
 }

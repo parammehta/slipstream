@@ -707,7 +707,9 @@ const DATA_BASE = "/data/";
  */
 async function loadManifest() {
   try {
-    const res = await fetch(DATA_BASE + "manifest.json", { cache: "force-cache" });
+    // Revalidated rather than cached: it is the index that says which
+    // content-addressed shards are current.
+    const res = await fetch(DATA_BASE + "manifest.json", { cache: "no-cache" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const parsed = await res.json();
     if (!parsed.shards || !parsed.shards.length) throw new Error("no shards");
@@ -722,7 +724,17 @@ function initMessage(origins) {
   if (!manifest) return { type: "init", rows: ROWS, seed: 1 };
   // Absolute: the worker is created from a blob: URL, which gives it no
   // origin to resolve a root-relative path against.
-  return { type: "init", source: "fetch", origins, baseUrl: location.origin };
+  return {
+    type: "init",
+    source: "fetch",
+    // Sizes travel with the request so progress is measured against the
+    // decoded total rather than a compressed Content-Length.
+    origins: origins.map((iata) => {
+      const entry = shardFor(iata);
+      return { iata, file: entry?.file, bytes: entry?.bytes ?? 0 };
+    }),
+    baseUrl: location.origin,
+  };
 }
 
 function boot() {
@@ -749,6 +761,9 @@ function boot() {
     msg.textContent = manifest
       ? "fetching " + loadedOrigins.join(", ") + "…"
       : "generating " + ROWS.toLocaleString() + " offers…";
+    $("bootSub").textContent = manifest
+      ? "columnar slab · " + (shardFor(loadedOrigins[0])?.rows ?? 0).toLocaleString() + " offers"
+      : "columnar encode · radix argsort";
     host.post(initMessage(loadedOrigins));
   };
 
@@ -764,9 +779,10 @@ function boot() {
 
   loadManifest().then((found) => {
     manifest = found;
-    // Start on the busiest origin: one shard, a fast first paint, and a
-    // realistic starting point since nobody searches every airport at once.
-    loadedOrigins = found ? [found.shards[0].iata] : [];
+    // Busiest shard that is still quick to fetch. Defaulting to the busiest
+    // outright picked the single largest file of ninety, so a cold first
+    // visit downloaded the worst case before showing anything.
+    loadedOrigins = found ? [defaultShard(found).iata] : [];
     try {
       if (FORCE_INLINE) throw new Error("forced inline");
       if (typeof Worker !== "function" || typeof URL.createObjectURL !== "function") {
@@ -798,6 +814,19 @@ let onReady = () => {};
 let onPong = () => {};
 
 function onEngineMessage(msg) {
+  if (msg.type === "progress") {
+    const pct = msg.total ? Math.min(100, Math.round((msg.loaded / msg.total) * 100)) : 0;
+    const mb = (msg.total / 1048576).toFixed(1);
+    if (!booted) {
+      $("bootMsg").textContent =
+        "fetching " + loadedOrigins.join(", ") + " · " + pct + "% of " + mb + "MB";
+    } else {
+      $("loadingText").textContent =
+        "Fetching " + loadedOrigins.join(", ") + " · " + pct + "%";
+    }
+    return;
+  }
+
   if (msg.type === "pong") {
     onPong();
     return;
@@ -1889,6 +1918,16 @@ function readUrlState() {
     }
   }
   return true;
+}
+
+/** Largest shard worth making a first-time visitor wait for. */
+const FIRST_LOAD_BUDGET = 400_000;
+
+function defaultShard(found) {
+  return (
+    found.shards.find((entry) => entry.bytes <= FIRST_LOAD_BUDGET) ??
+    found.shards[found.shards.length - 1]
+  );
 }
 
 /** Every published shard, busiest first. */

@@ -5,6 +5,8 @@ import {
   BYTES_PER,
   align8,
   type ColumnMeta,
+  type ConstantColumn,
+  type DerivedColumn,
   type DType,
   type SlabMeta,
   type TypedArray,
@@ -16,6 +18,45 @@ export interface SlabInput {
   columns: Record<string, TypedArray>;
   dicts: Record<string, string[]>;
   schema: ReadonlyArray<{ name: string; type: DType }>;
+  /**
+   * Columns to leave out of the file and rebuild on decode. Both kinds are
+   * checked against the data here, at build time, because a wrong claim
+   * would corrupt every row silently.
+   */
+  constants?: Record<string, ConstantColumn>;
+  derived?: Record<string, DerivedColumn>;
+}
+
+/** Refuses to omit a column whose values do not match the claim. */
+function verifyOmissions(input: SlabInput): void {
+  const { rowCount, columns } = input;
+
+  for (const [name, spec] of Object.entries(input.constants ?? {})) {
+    const column = columns[name];
+    if (!column) throw new Error(`encodeSlab: cannot check constant "${name}", column missing`);
+    for (let i = 0; i < rowCount; i++) {
+      if (column[i] !== spec.value) {
+        throw new Error(
+          `encodeSlab: "${name}" is not constant — row ${i} is ${column[i]}, not ${spec.value}`,
+        );
+      }
+    }
+  }
+
+  for (const [name, spec] of Object.entries(input.derived ?? {})) {
+    const column = columns[name];
+    const a = columns[spec.from[0]];
+    const b = columns[spec.from[1]];
+    if (!column || !a || !b) throw new Error(`encodeSlab: cannot check derived "${name}"`);
+    for (let i = 0; i < rowCount; i++) {
+      if (column[i] !== a[i] + b[i]) {
+        throw new Error(
+          `encodeSlab: "${name}" is not ${spec.from.join(' + ')} — row ${i} is ${column[i]}, ` +
+          `expected ${a[i] + b[i]}`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -24,10 +65,17 @@ export interface SlabInput {
  */
 export function encodeSlab(input: SlabInput): ArrayBuffer {
   const { rowCount, schema, columns } = input;
+  verifyOmissions(input);
+
+  const omitted = new Set([
+    ...Object.keys(input.constants ?? {}),
+    ...Object.keys(input.derived ?? {}),
+  ]);
 
   const columnMeta: ColumnMeta[] = [];
   let cursor = HEADER_BYTES;
   for (const { name, type } of schema) {
+    if (omitted.has(name)) continue;
     const col = columns[name];
     if (!col) throw new Error(`encodeSlab: missing column "${name}"`);
     if (col.length !== rowCount) {
@@ -44,6 +92,8 @@ export function encodeSlab(input: SlabInput): ArrayBuffer {
     columns: columnMeta,
     dicts: input.dicts,
     baseDayEpoch: input.baseDayEpoch,
+    ...(input.constants ? { constants: input.constants } : {}),
+    ...(input.derived ? { derived: input.derived } : {}),
   };
   const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
 

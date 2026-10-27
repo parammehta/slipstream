@@ -630,6 +630,20 @@ const HEADER_BYTES = 32;
 const BYTES_PER                        = { u8: 1, u16: 2, u32: 4, i32: 4 };
 
 /**
+ * A column the file does not store because it can be rebuilt on arrival.
+ *
+ * Two kinds pay for themselves. A column that holds one value for every row
+ * in the file — origin, in a slab partitioned by origin — and a column that
+ * is the sum of two others, like an arrival time that is always departure
+ * plus duration. Together they are 6 of the 20 bytes a row would otherwise
+ * occupy, and rebuilding them costs a pass over the rows at decode.
+ *
+ * The derivation is deliberately just a sum of two columns rather than an
+ * expression language: a format that can compute anything is a format whose
+ * reader has to be trusted.
+ */
+
+/**
  * Canonical offer schema. Widths are chosen to be the smallest that cannot
  * overflow for realistic data: durationMin caps at ~45 days, priceCents at
  * ~$42M, and stops/carrierId at 255 distinct values.
@@ -676,16 +690,55 @@ function align8(n        )         {
 }
 
 /* ---- src/core/encode.ts ---- */
+/** Refuses to omit a column whose values do not match the claim. */
+function verifyOmissions(input           )       {
+  const { rowCount, columns } = input;
+
+  for (const [name, spec] of Object.entries(input.constants ?? {})) {
+    const column = columns[name];
+    if (!column) throw new Error(`encodeSlab: cannot check constant "${name}", column missing`);
+    for (let i = 0; i < rowCount; i++) {
+      if (column[i] !== spec.value) {
+        throw new Error(
+          `encodeSlab: "${name}" is not constant — row ${i} is ${column[i]}, not ${spec.value}`,
+        );
+      }
+    }
+  }
+
+  for (const [name, spec] of Object.entries(input.derived ?? {})) {
+    const column = columns[name];
+    const a = columns[spec.from[0]];
+    const b = columns[spec.from[1]];
+    if (!column || !a || !b) throw new Error(`encodeSlab: cannot check derived "${name}"`);
+    for (let i = 0; i < rowCount; i++) {
+      if (column[i] !== a[i] + b[i]) {
+        throw new Error(
+          `encodeSlab: "${name}" is not ${spec.from.join(' + ')} — row ${i} is ${column[i]}, ` +
+          `expected ${a[i] + b[i]}`,
+        );
+      }
+    }
+  }
+}
+
 /**
  * Serialize columns into a single ArrayBuffer. Columns keep their natural
  * alignment so the decoder can create zero-copy views over the same memory.
  */
 function encodeSlab(input           )              {
   const { rowCount, schema, columns } = input;
+  verifyOmissions(input);
+
+  const omitted = new Set([
+    ...Object.keys(input.constants ?? {}),
+    ...Object.keys(input.derived ?? {}),
+  ]);
 
   const columnMeta               = [];
   let cursor = HEADER_BYTES;
   for (const { name, type } of schema) {
+    if (omitted.has(name)) continue;
     const col = columns[name];
     if (!col) throw new Error(`encodeSlab: missing column "${name}"`);
     if (col.length !== rowCount) {
@@ -702,6 +755,8 @@ function encodeSlab(input           )              {
     columns: columnMeta,
     dicts: input.dicts,
     baseDayEpoch: input.baseDayEpoch,
+    ...(input.constants ? { constants: input.constants } : {}),
+    ...(input.derived ? { derived: input.derived } : {}),
   };
   const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
 
@@ -759,6 +814,22 @@ function decodeSlab(buf             )       {
       throw new Error(`decodeSlab: column "${m.name}" out of bounds`);
     }
     columns[m.name] = viewColumn(buf, m, rowCount);
+  }
+
+  // Columns the file left out are rebuilt here, so every kernel downstream
+  // sees a complete slab and none of them know the difference.
+  for (const [name, spec] of Object.entries(meta.constants ?? {})) {
+    const rebuilt = allocColumn(spec.type, rowCount);
+    rebuilt.fill(spec.value);
+    columns[name] = rebuilt;
+  }
+  for (const [name, spec] of Object.entries(meta.derived ?? {})) {
+    const a = columns[spec.from[0]];
+    const b = columns[spec.from[1]];
+    if (!a || !b) throw new Error(`decodeSlab: "${name}" needs ${spec.from.join(' and ')}`);
+    const rebuilt = allocColumn(spec.type, rowCount);
+    for (let i = 0; i < rowCount; i++) rebuilt[i] = a[i] + b[i];
+    columns[name] = rebuilt;
   }
 
   return { rowCount, baseDayEpoch, columns, dicts: meta.dicts, byteLength: buf.byteLength };
@@ -1756,21 +1827,59 @@ function percentile(column                         , order             , p      
  * what the page does. Both end at the same slab, so nothing downstream knows
  * which happened.
  */
-async function loadSlab(msg
 
- )                {
+/** Report at most every 32KB: a message per chunk would swamp the page. */
+const PROGRESS_STEP = 32 * 1024;
+
+async function loadSlab(
+  msg
+
+   ,
+  report                             ,
+)                {
   if (msg.source === 'fetch') {
-    const origins = msg.origins ?? [];
-    if (origins.length === 0) throw new Error('init: fetch needs at least one origin');
+    const specs               = (msg.origins ?? []).map((o) =>
+      typeof o === 'string' ? { iata: o } : o,
+    );
+    if (specs.length === 0) throw new Error('init: fetch needs at least one origin');
     const base = (msg.baseUrl ?? '') + '/data/';
 
+    // Content-Length is the compressed length while the reader yields
+    // decompressed bytes, so the manifest's size is the honest total.
+    const total = specs.reduce((sum, spec) => sum + (spec.bytes ?? 0), 0);
+    let loaded = 0;
+    let reported = 0;
+
     const buffers = await Promise.all(
-      origins.map(async (iata) => {
-        const res = await fetch(base + iata + '.slab');
-        if (!res.ok) throw new Error(`init: ${iata}.slab returned HTTP ${res.status}`);
-        return res.arrayBuffer();
+      specs.map(async (spec) => {
+        const res = await fetch(base + (spec.file ?? spec.iata + '.slab'));
+        if (!res.ok) throw new Error(`init: ${spec.iata} shard returned HTTP ${res.status}`);
+        if (!res.body || !report || total === 0) return res.arrayBuffer();
+
+        const reader = res.body.getReader();
+        const chunks               = [];
+        let size = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          size += value.length;
+          loaded += value.length;
+          if (loaded - reported >= PROGRESS_STEP) {
+            reported = loaded;
+            report({ type: 'progress', loaded, total });
+          }
+        }
+        const joined = new Uint8Array(size);
+        let at = 0;
+        for (const chunk of chunks) {
+          joined.set(chunk, at);
+          at += chunk.length;
+        }
+        return joined.buffer;
       }),
     );
+    if (report && total > 0) report({ type: 'progress', loaded: total, total });
     return concatSlabs(buffers.map(decodeSlab));
   }
 
@@ -1778,11 +1887,14 @@ async function loadSlab(msg
   return decodeSlab(encodeSlab(generateOffersFromMarkets(marketDataset(), rowCount, msg.seed ?? 1)));
 }
 
-async function init(msg
+async function init(
+  msg
 
- ) {
+   ,
+  report                             ,
+) {
   const t0 = performance.now();
-  slab = await loadSlab(msg);
+  slab = await loadSlab(msg, report);
   const built = performance.now();
 
   scratch = createScratch(slab.rowCount);
@@ -1985,7 +2097,10 @@ function windowOnly(msg                                   ) {
 // ArrayBufferLike, not ArrayBuffer: a typed array's `.buffer` may be a
 // SharedArrayBuffer as far as the type system knows, and postMessage accepts
 // either.
-async function handleMessage(msg     )                                                       {
+async function handleMessage(
+  msg     ,
+  report                             ,
+)                                                       {
   if (msg.type === 'ping') {
     // Proves the bundle loaded and is executing. Sent before `init` so the
     // page can tell "worker is broken" from "worker is busy building", which
@@ -1994,7 +2109,7 @@ async function handleMessage(msg     )                                          
   }
   if (msg.type === 'init') {
     try {
-      return { reply: await init(msg), transfer: [] };
+      return { reply: await init(msg, report), transfer: [] };
     } catch (err) {
       return { reply: { type: 'error', message: (err         ).message }, transfer: [] };
     }
@@ -2025,7 +2140,7 @@ async function handleMessage(msg     )                                          
 const ROW_FIELD_COUNT = ROW_FIELDS.length;
 
 self.onmessage = (event) => {
-  Promise.resolve(handleMessage(event.data)).then((out) => {
+  Promise.resolve(handleMessage(event.data, (m) => self.postMessage(m))).then((out) => {
     self.postMessage(out.reply, out.transfer);
   });
 };
@@ -2142,7 +2257,9 @@ const DATA_BASE = "/data/";
  */
 async function loadManifest() {
   try {
-    const res = await fetch(DATA_BASE + "manifest.json", { cache: "force-cache" });
+    // Revalidated rather than cached: it is the index that says which
+    // content-addressed shards are current.
+    const res = await fetch(DATA_BASE + "manifest.json", { cache: "no-cache" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const parsed = await res.json();
     if (!parsed.shards || !parsed.shards.length) throw new Error("no shards");
@@ -2157,7 +2274,17 @@ function initMessage(origins) {
   if (!manifest) return { type: "init", rows: ROWS, seed: 1 };
   // Absolute: the worker is created from a blob: URL, which gives it no
   // origin to resolve a root-relative path against.
-  return { type: "init", source: "fetch", origins, baseUrl: location.origin };
+  return {
+    type: "init",
+    source: "fetch",
+    // Sizes travel with the request so progress is measured against the
+    // decoded total rather than a compressed Content-Length.
+    origins: origins.map((iata) => {
+      const entry = shardFor(iata);
+      return { iata, file: entry?.file, bytes: entry?.bytes ?? 0 };
+    }),
+    baseUrl: location.origin,
+  };
 }
 
 function boot() {
@@ -2184,6 +2311,9 @@ function boot() {
     msg.textContent = manifest
       ? "fetching " + loadedOrigins.join(", ") + "…"
       : "generating " + ROWS.toLocaleString() + " offers…";
+    $("bootSub").textContent = manifest
+      ? "columnar slab · " + (shardFor(loadedOrigins[0])?.rows ?? 0).toLocaleString() + " offers"
+      : "columnar encode · radix argsort";
     host.post(initMessage(loadedOrigins));
   };
 
@@ -2199,9 +2329,10 @@ function boot() {
 
   loadManifest().then((found) => {
     manifest = found;
-    // Start on the busiest origin: one shard, a fast first paint, and a
-    // realistic starting point since nobody searches every airport at once.
-    loadedOrigins = found ? [found.shards[0].iata] : [];
+    // Busiest shard that is still quick to fetch. Defaulting to the busiest
+    // outright picked the single largest file of ninety, so a cold first
+    // visit downloaded the worst case before showing anything.
+    loadedOrigins = found ? [defaultShard(found).iata] : [];
     try {
       if (FORCE_INLINE) throw new Error("forced inline");
       if (typeof Worker !== "function" || typeof URL.createObjectURL !== "function") {
@@ -2233,6 +2364,19 @@ let onReady = () => {};
 let onPong = () => {};
 
 function onEngineMessage(msg) {
+  if (msg.type === "progress") {
+    const pct = msg.total ? Math.min(100, Math.round((msg.loaded / msg.total) * 100)) : 0;
+    const mb = (msg.total / 1048576).toFixed(1);
+    if (!booted) {
+      $("bootMsg").textContent =
+        "fetching " + loadedOrigins.join(", ") + " · " + pct + "% of " + mb + "MB";
+    } else {
+      $("loadingText").textContent =
+        "Fetching " + loadedOrigins.join(", ") + " · " + pct + "%";
+    }
+    return;
+  }
+
   if (msg.type === "pong") {
     onPong();
     return;
@@ -3324,6 +3468,16 @@ function readUrlState() {
     }
   }
   return true;
+}
+
+/** Largest shard worth making a first-time visitor wait for. */
+const FIRST_LOAD_BUDGET = 400_000;
+
+function defaultShard(found) {
+  return (
+    found.shards.find((entry) => entry.bytes <= FIRST_LOAD_BUDGET) ??
+    found.shards[found.shards.length - 1]
+  );
 }
 
 /** Every published shard, busiest first. */

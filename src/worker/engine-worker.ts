@@ -57,25 +57,70 @@ function percentile(column: { [i: number]: number }, order: Uint32Array, p: numb
  * what the page does. Both end at the same slab, so nothing downstream knows
  * which happened.
  */
-async function loadSlab(msg: {
-  source?: string;
-  rows?: number;
-  seed?: number;
-  origins?: string[];
-  baseUrl?: string;
-}): Promise<Slab> {
+interface OriginSpec {
+  iata: string;
+  /** Content-addressed file name from the manifest. */
+  file?: string;
+  /** Decoded size from the manifest, so progress is against a real total. */
+  bytes?: number;
+}
+
+/** Report at most every 32KB: a message per chunk would swamp the page. */
+const PROGRESS_STEP = 32 * 1024;
+
+async function loadSlab(
+  msg: {
+    source?: string;
+    rows?: number;
+    seed?: number;
+    origins?: Array<string | OriginSpec>;
+    baseUrl?: string;
+  },
+  report?: (message: unknown) => void,
+): Promise<Slab> {
   if (msg.source === 'fetch') {
-    const origins = msg.origins ?? [];
-    if (origins.length === 0) throw new Error('init: fetch needs at least one origin');
+    const specs: OriginSpec[] = (msg.origins ?? []).map((o) =>
+      typeof o === 'string' ? { iata: o } : o,
+    );
+    if (specs.length === 0) throw new Error('init: fetch needs at least one origin');
     const base = (msg.baseUrl ?? '') + '/data/';
 
+    // Content-Length is the compressed length while the reader yields
+    // decompressed bytes, so the manifest's size is the honest total.
+    const total = specs.reduce((sum, spec) => sum + (spec.bytes ?? 0), 0);
+    let loaded = 0;
+    let reported = 0;
+
     const buffers = await Promise.all(
-      origins.map(async (iata) => {
-        const res = await fetch(base + iata + '.slab');
-        if (!res.ok) throw new Error(`init: ${iata}.slab returned HTTP ${res.status}`);
-        return res.arrayBuffer();
+      specs.map(async (spec) => {
+        const res = await fetch(base + (spec.file ?? spec.iata + '.slab'));
+        if (!res.ok) throw new Error(`init: ${spec.iata} shard returned HTTP ${res.status}`);
+        if (!res.body || !report || total === 0) return res.arrayBuffer();
+
+        const reader = res.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          size += value.length;
+          loaded += value.length;
+          if (loaded - reported >= PROGRESS_STEP) {
+            reported = loaded;
+            report({ type: 'progress', loaded, total });
+          }
+        }
+        const joined = new Uint8Array(size);
+        let at = 0;
+        for (const chunk of chunks) {
+          joined.set(chunk, at);
+          at += chunk.length;
+        }
+        return joined.buffer;
       }),
     );
+    if (report && total > 0) report({ type: 'progress', loaded: total, total });
     return concatSlabs(buffers.map(decodeSlab));
   }
 
@@ -83,15 +128,18 @@ async function loadSlab(msg: {
   return decodeSlab(encodeSlab(generateOffersFromMarkets(marketDataset(), rowCount, msg.seed ?? 1)));
 }
 
-async function init(msg: {
-  source?: string;
-  rows?: number;
-  seed?: number;
-  origins?: string[];
-  baseUrl?: string;
-}) {
+async function init(
+  msg: {
+    source?: string;
+    rows?: number;
+    seed?: number;
+    origins?: Array<string | OriginSpec>;
+    baseUrl?: string;
+  },
+  report?: (message: unknown) => void,
+) {
   const t0 = performance.now();
-  slab = await loadSlab(msg);
+  slab = await loadSlab(msg, report);
   const built = performance.now();
 
   scratch = createScratch(slab.rowCount);
@@ -300,7 +348,10 @@ function windowOnly(msg: { offset: number; limit: number }) {
 // ArrayBufferLike, not ArrayBuffer: a typed array's `.buffer` may be a
 // SharedArrayBuffer as far as the type system knows, and postMessage accepts
 // either.
-export async function handleMessage(msg: any): Promise<{ reply: any; transfer: ArrayBufferLike[] }> {
+export async function handleMessage(
+  msg: any,
+  report?: (message: unknown) => void,
+): Promise<{ reply: any; transfer: ArrayBufferLike[] }> {
   if (msg.type === 'ping') {
     // Proves the bundle loaded and is executing. Sent before `init` so the
     // page can tell "worker is broken" from "worker is busy building", which
@@ -309,7 +360,7 @@ export async function handleMessage(msg: any): Promise<{ reply: any; transfer: A
   }
   if (msg.type === 'init') {
     try {
-      return { reply: await init(msg), transfer: [] };
+      return { reply: await init(msg, report), transfer: [] };
     } catch (err) {
       return { reply: { type: 'error', message: (err as Error).message }, transfer: [] };
     }
