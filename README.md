@@ -11,15 +11,18 @@ one with an open self-service tier — decommissioned it on 17 July 2026,
 leaving enterprise contracts and paid scrapers. Fare data is something you
 acquire in bulk, offline.
 
-So Slipstream is built that way round: fares are harvested on a schedule into
-a columnar binary **slab**, the client downloads one slab, and every filter,
+So Slipstream is built that way round: fares are harvested offline into a
+columnar binary **slab**, the client downloads one slab, and every filter,
 sort, and histogram runs locally over typed arrays. Nothing touches the
 network during interaction.
 
 ## Status
 
-The query engine and the results UI are built and benchmarked. The harvester
-and multi-city/date-grid views are not yet written — see [Roadmap](#roadmap).
+Complete. The query engine, the results UI, the flexible-date grid, multi-city
+search, the harvester and the per-origin sharding are all built, benchmarked
+and deployed; the [roadmap](#roadmap) is closed. The one item that was not
+built was [decided against](#what-their-terms-actually-say) rather than
+deferred.
 
 ## Measured at 1,000,000 rows
 
@@ -316,12 +319,22 @@ than those expressly permitted" or that do not "meet the goals of the Affiliate
 Network", and clause 4.2 ties the arrangement to users being redirected — so a
 page that shows these fares and links nowhere does not meet that goal.
 
-The fix is a field this harvester currently drops. `prices_for_dates` returns a
-`link` per fare: the affiliate deep link. Carrying it through and linking each
-row out resolves the clause, and incidentally makes the results bookable, which
-a flight search arguably has to be. That is a product decision rather than a
-technical one, so `scripts/harvest.ts` refuses to write to `src/core/markets.ts`
-and says why. A note in a README is not a control.
+There was a fix available. `prices_for_dates` returns a `link` per fare — the
+affiliate deep link — and carrying it through would have resolved the clause
+and made the results bookable.
+
+**Decided against, October 2026.** Monetising a portfolio project through
+affiliate links is a different thing from publishing one, and that is not what
+this is for. So the Travelpayouts fares stay unpublished, and
+`scripts/harvest.ts` refuses to write them to `src/core/markets.ts` — a
+permanent guard now rather than a holding position. A note in a README is not a
+control.
+
+The provider itself stays. It is what demonstrates that
+`src/harvest/provider.ts` is an interface rather than a shape fitted to DB1B,
+and the shipped site runs on public-domain data with no third party's terms
+attached to it. That is the better outcome for something whose whole argument
+is that you can check its claims yourself.
 
 ## How it ships
 
@@ -435,10 +448,20 @@ discovered at runtime.
     time zone (see [How it ships](#how-it-ships))
 13. ~~A second provider: live quotes with real departure times~~ — done,
     the [Travelpayouts price cache](#a-second-source-live-quotes). Harvests
-    and tests clean. Publishing waits on one question only:
-    [whether fares may be shown without a click-through](#what-their-terms-actually-say).
-14. Replace modelled departure times with the observed ones, once those
-    fares may be published
+    and tests clean; the fares are deliberately not published
+    ([why](#what-their-terms-actually-say)).
+14. ~~Replace modelled departure times with the observed ones~~ — **decided
+    against, October 2026.** The only source of observed departures here is
+    the price cache, and publishing it would mean adding affiliate
+    click-throughs to satisfy clause 5.1. That is a trade this project is not
+    making, so departure times stay modelled and the README says so where it
+    describes them. Closed rather than deferred: it is a decision, not a
+    backlog item.
+
+That is the roadmap finished. The site runs entirely on public-domain data,
+the kernel timings the write-up quotes come out of `npm run bench` in this
+repo, and the one thing it models rather than measures is labelled as
+modelled.
 
 ## Design notes
 

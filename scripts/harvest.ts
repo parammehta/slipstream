@@ -144,17 +144,15 @@ if (providerId === 'travelpayouts' && resolve(outPath) === resolve(PUBLISHED_OUT
     '              terms covers implying a connection even without using a mark.\n' +
     '  rate       — 300/min for get_latest_prices, 600/min for prices_for_dates,\n' +
     '              enforced by the provider and checked against X-Rate-Limit.\n\n' +
-    'The one that still blocks publishing is display without a click-through.\n' +
-    'It is not expressly permitted: clause 5.1 bars use "in ways other than\n' +
-    'those expressly permitted" or that "do not meet the goals of the Affiliate\n' +
-    'Network", and clause 4.2 ties the whole arrangement to users being\n' +
-    'redirected. A page that shows these fares and links nowhere does not meet\n' +
-    'that goal.\n\n' +
-    'The fix is the field this harvester currently drops: prices_for_dates\n' +
-    'returns a `link` per fare, which is the affiliate deep link. Carrying it\n' +
-    'through and linking each row out resolves the clause and makes the result\n' +
-    'bookable. That is a product decision, so it is not made here.\n\n' +
-    `Until then, write somewhere else (the default is ${defaultOut.replace(ROOT, '.')}).`,
+    'The fourth is why this refuses. Displaying fares without a click-through\n' +
+    'is not expressly permitted: clause 5.1 bars use "in ways other than those\n' +
+    'expressly permitted" or that "do not meet the goals of the Affiliate\n' +
+    'Network", and clause 4.2 ties the arrangement to users being redirected.\n\n' +
+    'Carrying the affiliate link through would resolve it. DECIDED AGAINST,\n' +
+    'October 2026: this project does not monetise through affiliate links, so\n' +
+    'these fares are not published. This guard is permanent, not a holding\n' +
+    'position — if that decision is ever revisited, change it deliberately.\n\n' +
+    `Harvesting is still fine; write it somewhere else (the default is ${defaultOut.replace(ROOT, '.')}).`,
   );
   process.exit(2);
 }
