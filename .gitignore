@@ -5,3 +5,8 @@ dist/
 .DS_Store
 .vercel
 demo/data/
+
+# Credentials. Never commit these.
+.env
+.env.*
+!.env.example
