@@ -357,6 +357,8 @@ figcaption {
       parsed into objects before the first comparison. Two of the eight columns are not
       stored at all: every row in a per-origin file departs the same airport, and arrival
       is always departure plus duration, so both are rebuilt on arrival rather than sent.
+      That sum is a clock at the origin, so the destination's time zone is added back when
+      the row is painted — on the forty rows you can see, never on the million you cannot.
     </figcaption>
   </figure>
 

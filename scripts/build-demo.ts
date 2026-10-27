@@ -73,6 +73,8 @@ export const EXCLUDED_FROM_BUNDLE: ReadonlyArray<string> = ['index.ts', 'routes.
  */
 export const PAGE_BUNDLE: ReadonlyArray<{ dir: string; file: string }> = [
   { dir: 'src/core', file: 'geo.ts' },
+  { dir: 'src/core', file: 'zones.ts' },
+  { dir: 'src/core', file: 'tz.ts' },
 ];
 
 /**

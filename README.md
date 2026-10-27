@@ -140,6 +140,8 @@ src/core/
   markets.ts     GENERATED — harvested markets and their fare curves
   offers.ts      offers sampled from real fare curves
   routes.ts      GENERATED — OpenFlights routes, used by the benchmark
+  zones.ts       GENERATED — IATA -> IANA time zone
+  tz.ts          reading an arrival clock at the destination
   synth.ts       seeded offers over those routes, for tests and benchmarks
 src/harvest/
   provider.ts    the fare-source interface
@@ -192,6 +194,23 @@ the passenger flew, never when they left. So schedules are generated —
 duration from distance, connection likelihood from each market's *observed*
 connecting share, block times jittered because real aircraft differ. Fares,
 routes, carriers and carrier mix come from the data; clocks do not.
+
+**What is not modelled: time zones.** A departure is a local clock at the
+origin and duration is elapsed time, so their sum — which is how the file
+stores arrival, and why the column is not stored at all — is a clock still
+running at the origin. Left that way it reads three hours fast on LAX-JFK and
+puts a 17:37 departure on the wrong *date*. `src/core/tz.ts` adds the zone
+change back when a row is painted, which is the only place it matters: arrival
+is never filtered or sorted on, so the correction touches the ~40 rows on
+screen and costs 0.007ms a frame.
+
+It cannot be a stored per-airport offset. LAX-JFK is three hours all year
+because both ends keep DST, but LAX-PHX is one hour in January and zero in
+July because Arizona does not, and LAX-HNL moves the other way — so the
+offsets are read at the two instants that actually matter, departure at the
+origin and arrival at the destination. Airport zones come from
+[OpenFlights](https://openflights.org/data.html) via `scripts/fetch-zones.ts`;
+an airport with no zone is left uncorrected rather than guessed at.
 
 Two filters matter more than they look. Bulk fares (`BulkFare > 0`) are
 tour-operator inventory rather than what a passenger paid, and fares under $20

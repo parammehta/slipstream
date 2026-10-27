@@ -2286,6 +2286,192 @@ function suggestOrigin(
   const nearest = nearestAirport(here, airports);
   return nearest && nearest.km <= maxKm ? nearest : null;
 }
+
+/* ---- src/core/zones.ts ---- */
+/**
+ * GENERATED FILE — do not edit.
+ *
+ * Produced by scripts/fetch-zones.ts from OpenFlights.
+ * 90 airports.
+ *
+ * Data only: the arithmetic that uses it is in src/core/tz.ts, which is
+ * hand-written and tested. An airport missing here is left uncorrected
+ * rather than guessed at.
+ */
+
+const AIRPORT_ZONES                         = {
+  "ABE": "America/New_York",
+  "ABQ": "America/Denver",
+  "ALB": "America/New_York",
+  "ANC": "America/Anchorage",
+  "ATL": "America/New_York",
+  "AUS": "America/Chicago",
+  "AZA": "America/Phoenix",
+  "BDL": "America/New_York",
+  "BNA": "America/Chicago",
+  "BOI": "America/Denver",
+  "BOS": "America/New_York",
+  "BQN": "America/Puerto_Rico",
+  "BUF": "America/New_York",
+  "BUR": "America/Los_Angeles",
+  "BWI": "America/New_York",
+  "CHS": "America/New_York",
+  "CLE": "America/New_York",
+  "CLT": "America/New_York",
+  "CMH": "America/New_York",
+  "CVG": "America/New_York",
+  "DAL": "America/Chicago",
+  "DCA": "America/New_York",
+  "DEN": "America/Denver",
+  "DFW": "America/Chicago",
+  "DTW": "America/New_York",
+  "EWR": "America/New_York",
+  "FAI": "America/Anchorage",
+  "FLL": "America/New_York",
+  "GEG": "America/Los_Angeles",
+  "GRR": "America/New_York",
+  "HNL": "Pacific/Honolulu",
+  "HOU": "America/Chicago",
+  "HPN": "America/New_York",
+  "HVN": "America/New_York",
+  "IAD": "America/New_York",
+  "IAH": "America/Chicago",
+  "IND": "America/New_York",
+  "ISP": "America/New_York",
+  "ITO": "Pacific/Honolulu",
+  "JAX": "America/New_York",
+  "JFK": "America/New_York",
+  "KOA": "Pacific/Honolulu",
+  "LAS": "America/Los_Angeles",
+  "LAX": "America/Los_Angeles",
+  "LGA": "America/New_York",
+  "LGB": "America/Los_Angeles",
+  "LIH": "Pacific/Honolulu",
+  "MCI": "America/Chicago",
+  "MCO": "America/New_York",
+  "MDW": "America/Chicago",
+  "MEM": "America/Chicago",
+  "MHT": "America/New_York",
+  "MIA": "America/New_York",
+  "MKE": "America/Chicago",
+  "MSP": "America/Chicago",
+  "MSY": "America/Chicago",
+  "OAK": "America/Los_Angeles",
+  "OGG": "Pacific/Honolulu",
+  "OMA": "America/Chicago",
+  "ONT": "America/Los_Angeles",
+  "ORD": "America/Chicago",
+  "PBI": "America/New_York",
+  "PDX": "America/Los_Angeles",
+  "PHL": "America/New_York",
+  "PHX": "America/Phoenix",
+  "PIT": "America/New_York",
+  "PSP": "America/Los_Angeles",
+  "PVD": "America/New_York",
+  "PVU": "America/Denver",
+  "RDU": "America/New_York",
+  "RIC": "America/New_York",
+  "RNO": "America/Los_Angeles",
+  "ROC": "America/New_York",
+  "RSW": "America/New_York",
+  "SAN": "America/Los_Angeles",
+  "SAT": "America/Chicago",
+  "SDF": "America/New_York",
+  "SEA": "America/Los_Angeles",
+  "SFB": "America/New_York",
+  "SFO": "America/Los_Angeles",
+  "SJC": "America/Los_Angeles",
+  "SJU": "America/Puerto_Rico",
+  "SLC": "America/Denver",
+  "SMF": "America/Los_Angeles",
+  "SNA": "America/Los_Angeles",
+  "SRQ": "America/New_York",
+  "STL": "America/Chicago",
+  "SYR": "America/New_York",
+  "TPA": "America/New_York",
+  "TUS": "America/Phoenix"
+};
+
+/* ---- src/core/tz.ts ---- */
+/**
+ * Reading an arrival clock at the destination.
+ *
+ * The slab stores a local departure and an elapsed duration, and arrival is
+ * their sum. That sum is a clock still running at the origin: on LAX-JFK it
+ * is three hours fast, and a red-eye lands on the wrong date entirely. These
+ * are what put it right.
+ *
+ * The correction cannot be a per-airport constant. LAX-JFK is three hours all
+ * year because both ends keep DST, but LAX-PHX is one hour in January and
+ * zero in July because Arizona does not, and LAX-HNL moves the other way. It
+ * has to be read at the instants that actually matter.
+ */
+
+/** Reusing formatters matters: constructing one costs far more than a call. */
+
+/**
+ * Minutes east of UTC for `zone` at `instant` (epoch milliseconds).
+ *
+ * Formatting the instant in the zone and reading the wall clock back is the
+ * only way to get this from the platform; there is no offset API.
+ */
+function zoneOffsetMinutes(
+  zone        ,
+  instant        ,
+  formatters                 = new Map(),
+)         {
+  let fmt = formatters.get(zone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+    formatters.set(zone, fmt);
+  }
+  const parts = fmt.formatToParts(new Date(instant));
+  const field = (type        ) => {
+    const part = parts.find((p) => p.type === type);
+    return part ? Number(part.value) : 0;
+  };
+  const wall = Date.UTC(
+    field('year'), field('month') - 1, field('day'), field('hour'), field('minute'),
+  );
+  // The wall clock carries no seconds, so the raw difference includes up to
+  // 59s of the instant's own; every real zone offset is a whole minute.
+  return Math.round((wall - instant) / 60000);
+}
+
+/**
+ * Minutes to add to a stored arrival so it reads at the destination.
+ *
+ * `depMinutesEpoch` is the departure as minutes since the Unix epoch on the
+ * origin's own wall clock. Zero is returned when either airport has no zone,
+ * so an unknown airport shows the uncorrected clock rather than a wrong one.
+ */
+function arrivalShiftMinutes(
+  originIata        ,
+  destIata        ,
+  depMinutesEpoch        ,
+  durationMin        ,
+  formatters                 = new Map(),
+)         {
+  const from = AIRPORT_ZONES[originIata];
+  const to = AIRPORT_ZONES[destIata];
+  if (!from || !to || from === to) return 0;
+
+  // The departure is a wall clock, so the instant it names depends on the very
+  // offset being looked up. Reading it once at the naive instant and again at
+  // the corrected one settles it everywhere except inside the hour a spring
+  // change skips, which no real departure occupies.
+  const naive = depMinutesEpoch * 60000;
+  const approx = zoneOffsetMinutes(from, naive, formatters);
+  const originOffset = zoneOffsetMinutes(from, naive - approx * 60000, formatters);
+  const arrives = naive - originOffset * 60000 + durationMin * 60000;
+
+  return zoneOffsetMinutes(to, arrives, formatters) - originOffset;
+}
 </script>
 
 <script>
@@ -2658,6 +2844,36 @@ const clock = (min) => {
 };
 const hoursMins = (min) => (min >= 60 ? ((min / 60) | 0) + "h " : "") + (min % 60) + "m";
 const stopLabel = (n) => (n === 0 ? "Nonstop" : n === 1 ? "1 stop" : n + " stops");
+
+/* ---------- arrival clocks ---------- */
+/**
+ * Memoizes src/core/tz.ts over the rows on screen.
+ *
+ * The arithmetic and the reasoning live there; what is here is the cache.
+ * `formatToParts` is far too slow to run per row while scrolling, but one
+ * entry per route per day collapses the ~40 rows of a frame to a handful.
+ */
+const zoneFormatters = new Map();
+const shiftCache = new Map();
+function arrivalShift(originCode, destCode, depMin, durationMin) {
+  const day = (depMin / 1440) | 0;
+  const key = originCode + destCode + day;
+  const hit = shiftCache.get(key);
+  if (hit !== undefined) return hit;
+
+  const shift = arrivalShiftMinutes(
+    originCode, destCode,
+    meta.baseDayEpoch * 1440 + depMin,
+    durationMin,
+    zoneFormatters,
+  );
+  shiftCache.set(key, shift);
+  return shift;
+}
+
+/** "+1" for a red-eye, "-1" for a westbound arrival on the previous date. */
+const dayMark = (depDay, arrDay) =>
+  arrDay === depDay ? "" : "<sup>" + (arrDay > depDay ? "+" : "\u2212") + Math.abs(arrDay - depDay) + "</sup>";
 /** Fits a fare into a ~36px calendar cell. */
 const compactMoney = (cents) => {
   const d = cents / 100;
@@ -3107,7 +3323,10 @@ function applyTrips(msg) {
       for (let l = 0; l < msg.legCount; l++) {
         const base = (i * msg.legCount + l) * fields;
         const dep = msg.rows[base + F.dep];
-        const arr = msg.rows[base + F.arr];
+        const legOrigin = AIRPORTS[msg.rows[base + F.origin]];
+        const legDest = AIRPORTS[msg.rows[base + F.dest]];
+        const arr = msg.rows[base + F.arr] +
+          arrivalShift(legOrigin, legDest, dep, msg.rows[base + F.dur]);
         const stops = msg.rows[base + F.stops];
         const depDay = Math.floor(dep / 1440);
         const arrDay = Math.floor(arr / 1440);
@@ -3115,11 +3334,10 @@ function applyTrips(msg) {
           '<div class="trip-leg">' +
           '<span class="carrier-code mono">' + CARRIERS[msg.rows[base + F.carrier]] + "</span>" +
           '<span class="t mono">' + clock(dep) + "</span>" +
-          '<span class="p mono">' + AIRPORTS[msg.rows[base + F.origin]] + "</span>" +
+          '<span class="p mono">' + legOrigin + "</span>" +
           '<span class="to">→</span>' +
-          '<span class="t mono">' + clock(arr) +
-            (arrDay > depDay ? "<sup>+" + (arrDay - depDay) + "</sup>" : "") + "</span>" +
-          '<span class="p mono">' + AIRPORTS[msg.rows[base + F.dest]] + "</span>" +
+          '<span class="t mono">' + clock(arr) + dayMark(depDay, arrDay) + "</span>" +
+          '<span class="p mono">' + legDest + "</span>" +
           '<span class="meta">' + (dateLabels[depDay] || "") + " · " +
             hoursMins(msg.rows[base + F.dur]) + " · " + stopLabel(stops) + "</span>" +
           '<span class="fare mono">' + money(msg.rows[base + F.price]) + "</span>" +
@@ -3206,15 +3424,17 @@ function paintRows() {
     const d = rowBand.data;
 
     const dep = d[base + F.dep];
-    const arr = d[base + F.arr];
+    const originCode = AIRPORTS[d[base + F.origin]];
+    const destCode = AIRPORTS[d[base + F.dest]];
+    const arr = d[base + F.arr] + arrivalShift(originCode, destCode, dep, d[base + F.dur]);
     const stops = d[base + F.stops];
     const depDay = Math.floor(dep / 1440), arrDay = Math.floor(arr / 1440);
 
     p.carrier.textContent = CARRIERS[d[base + F.carrier]];
     p.depTime.textContent = clock(dep);
-    p.depPort.textContent = AIRPORTS[d[base + F.origin]];
-    p.arrTime.innerHTML = clock(arr) + (arrDay > depDay ? "<sup>+" + (arrDay - depDay) + "</sup>" : "");
-    p.arrPort.textContent = AIRPORTS[d[base + F.dest]];
+    p.depPort.textContent = originCode;
+    p.arrTime.innerHTML = clock(arr) + dayMark(depDay, arrDay);
+    p.arrPort.textContent = destCode;
     p.dur.textContent = hoursMins(d[base + F.dur]);
     p.stops.textContent = stopLabel(stops);
     p.stops.className = "s" + (stops === 0 ? " direct" : "");

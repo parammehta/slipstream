@@ -974,6 +974,36 @@ const clock = (min) => {
 };
 const hoursMins = (min) => (min >= 60 ? ((min / 60) | 0) + "h " : "") + (min % 60) + "m";
 const stopLabel = (n) => (n === 0 ? "Nonstop" : n === 1 ? "1 stop" : n + " stops");
+
+/* ---------- arrival clocks ---------- */
+/**
+ * Memoizes src/core/tz.ts over the rows on screen.
+ *
+ * The arithmetic and the reasoning live there; what is here is the cache.
+ * `formatToParts` is far too slow to run per row while scrolling, but one
+ * entry per route per day collapses the ~40 rows of a frame to a handful.
+ */
+const zoneFormatters = new Map();
+const shiftCache = new Map();
+function arrivalShift(originCode, destCode, depMin, durationMin) {
+  const day = (depMin / 1440) | 0;
+  const key = originCode + destCode + day;
+  const hit = shiftCache.get(key);
+  if (hit !== undefined) return hit;
+
+  const shift = arrivalShiftMinutes(
+    originCode, destCode,
+    meta.baseDayEpoch * 1440 + depMin,
+    durationMin,
+    zoneFormatters,
+  );
+  shiftCache.set(key, shift);
+  return shift;
+}
+
+/** "+1" for a red-eye, "-1" for a westbound arrival on the previous date. */
+const dayMark = (depDay, arrDay) =>
+  arrDay === depDay ? "" : "<sup>" + (arrDay > depDay ? "+" : "\u2212") + Math.abs(arrDay - depDay) + "</sup>";
 /** Fits a fare into a ~36px calendar cell. */
 const compactMoney = (cents) => {
   const d = cents / 100;
@@ -1423,7 +1453,10 @@ function applyTrips(msg) {
       for (let l = 0; l < msg.legCount; l++) {
         const base = (i * msg.legCount + l) * fields;
         const dep = msg.rows[base + F.dep];
-        const arr = msg.rows[base + F.arr];
+        const legOrigin = AIRPORTS[msg.rows[base + F.origin]];
+        const legDest = AIRPORTS[msg.rows[base + F.dest]];
+        const arr = msg.rows[base + F.arr] +
+          arrivalShift(legOrigin, legDest, dep, msg.rows[base + F.dur]);
         const stops = msg.rows[base + F.stops];
         const depDay = Math.floor(dep / 1440);
         const arrDay = Math.floor(arr / 1440);
@@ -1431,11 +1464,10 @@ function applyTrips(msg) {
           '<div class="trip-leg">' +
           '<span class="carrier-code mono">' + CARRIERS[msg.rows[base + F.carrier]] + "</span>" +
           '<span class="t mono">' + clock(dep) + "</span>" +
-          '<span class="p mono">' + AIRPORTS[msg.rows[base + F.origin]] + "</span>" +
+          '<span class="p mono">' + legOrigin + "</span>" +
           '<span class="to">→</span>' +
-          '<span class="t mono">' + clock(arr) +
-            (arrDay > depDay ? "<sup>+" + (arrDay - depDay) + "</sup>" : "") + "</span>" +
-          '<span class="p mono">' + AIRPORTS[msg.rows[base + F.dest]] + "</span>" +
+          '<span class="t mono">' + clock(arr) + dayMark(depDay, arrDay) + "</span>" +
+          '<span class="p mono">' + legDest + "</span>" +
           '<span class="meta">' + (dateLabels[depDay] || "") + " · " +
             hoursMins(msg.rows[base + F.dur]) + " · " + stopLabel(stops) + "</span>" +
           '<span class="fare mono">' + money(msg.rows[base + F.price]) + "</span>" +
@@ -1522,15 +1554,17 @@ function paintRows() {
     const d = rowBand.data;
 
     const dep = d[base + F.dep];
-    const arr = d[base + F.arr];
+    const originCode = AIRPORTS[d[base + F.origin]];
+    const destCode = AIRPORTS[d[base + F.dest]];
+    const arr = d[base + F.arr] + arrivalShift(originCode, destCode, dep, d[base + F.dur]);
     const stops = d[base + F.stops];
     const depDay = Math.floor(dep / 1440), arrDay = Math.floor(arr / 1440);
 
     p.carrier.textContent = CARRIERS[d[base + F.carrier]];
     p.depTime.textContent = clock(dep);
-    p.depPort.textContent = AIRPORTS[d[base + F.origin]];
-    p.arrTime.innerHTML = clock(arr) + (arrDay > depDay ? "<sup>+" + (arrDay - depDay) + "</sup>" : "");
-    p.arrPort.textContent = AIRPORTS[d[base + F.dest]];
+    p.depPort.textContent = originCode;
+    p.arrTime.innerHTML = clock(arr) + dayMark(depDay, arrDay);
+    p.arrPort.textContent = destCode;
     p.dur.textContent = hoursMins(d[base + F.dur]);
     p.stops.textContent = stopLabel(stops);
     p.stops.className = "s" + (stops === 0 ? " direct" : "");
