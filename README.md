@@ -287,12 +287,41 @@ side and not the destination side.
 So the two sources are complementary rather than ranked, and the useful
 combination is to **weight markets by DB1B and price them from here**.
 
-**The harvested fares are not published yet.** Writing them to
-`src/core/markets.ts` is refused by `scripts/harvest.ts`, not merely
-discouraged, until the display terms are confirmed — whether this project may
-store and re-serve them as static data, for how long, without an affiliate
-click-through, and at what harvest rate. DB1B is public domain and has no such
-question; this does, and a note in a README is not a control.
+### What their terms actually say
+
+DB1B is public domain and raises no question. This source does, so the terms
+were read rather than assumed. Three of the four answers came back fine:
+
+**Storing and re-serving: endorsed.** "The data is stored for 7 days for all
+types of queries. So it is recommended that you use them to generate static
+pages" — which is this project's architecture described back to it. The rate
+limit article goes further: "Cache frequently used data… You can also save the
+received information in the database or write it in a file." The constraint is
+freshness, not licensing: re-harvest inside the 7-day window and skip entries
+whose `actual` flag has cleared.
+
+**Rate limits: 300/min for `get_latest_prices`, 600/min for
+`prices_for_dates`**, 429 and a block for the rest of the minute if exceeded.
+The provider now paces to 90% of those and adopts whatever `X-Rate-Limit` the
+response reports. This was a real bug: the first version ran about 3,750/min
+against the 600 cap and only got away with it because enforcement was lenient.
+
+**Attribution: a factual source credit, nothing more.** Clause 6.6 treats
+*implying* a connection as a violation even without reproducing a mark, so the
+credit names the source and claims no relationship.
+
+**The fourth one is why nothing is published.** Displaying fares without a
+click-through is not expressly permitted. Clause 5.1 bars use "in ways other
+than those expressly permitted" or that do not "meet the goals of the Affiliate
+Network", and clause 4.2 ties the arrangement to users being redirected — so a
+page that shows these fares and links nowhere does not meet that goal.
+
+The fix is a field this harvester currently drops. `prices_for_dates` returns a
+`link` per fare: the affiliate deep link. Carrying it through and linking each
+row out resolves the clause, and incidentally makes the results bookable, which
+a flight search arguably has to be. That is a product decision rather than a
+technical one, so `scripts/harvest.ts` refuses to write to `src/core/markets.ts`
+and says why. A note in a README is not a control.
 
 ## How it ships
 
@@ -406,7 +435,8 @@ discovered at runtime.
     time zone (see [How it ships](#how-it-ships))
 13. ~~A second provider: live quotes with real departure times~~ — done,
     the [Travelpayouts price cache](#a-second-source-live-quotes). Harvests
-    and tests clean; publishing waits on its display terms.
+    and tests clean. Publishing waits on one question only:
+    [whether fares may be shown without a click-through](#what-their-terms-actually-say).
 14. Replace modelled departure times with the observed ones, once those
     fares may be published
 

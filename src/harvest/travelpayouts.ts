@@ -41,6 +41,69 @@ import {
 const BASE = 'https://api.travelpayouts.com/aviasales/v3';
 
 /**
+ * Documented requests per minute, per method.
+ *
+ * https://support.travelpayouts.com/hc/en-us/articles/4402565416594-API-rate-limits
+ * Exceeding one returns 429 and blocks the token for the rest of that minute,
+ * so these are a budget to spend rather than a wall to bounce off: the first
+ * version of this harvester ran ~3,750/min against the 600 cap and only got
+ * away with it because enforcement happened to be lenient.
+ */
+const RATE_LIMITS: Record<string, number> = {
+  get_latest_prices: 300,
+  prices_for_dates: 600,
+};
+
+/** Spacing requests is cheaper than being blocked for the rest of a minute. */
+const RATE_SAFETY = 0.9;
+
+export interface Clock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+const REAL_CLOCK: Clock = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
+/**
+ * Hands out evenly spaced start times.
+ *
+ * Allocating the slot synchronously before awaiting is what makes this hold
+ * under concurrency: eight workers calling `take` get eight different slots
+ * rather than eight copies of the same one.
+ */
+export class RateLimiter {
+  #spacing: number;
+  #next = 0;
+  #clock: Clock;
+
+  constructor(perMinute: number, clock: Clock = REAL_CLOCK) {
+    this.#spacing = 60_000 / (perMinute * RATE_SAFETY);
+    this.#clock = clock;
+  }
+
+  async take(): Promise<void> {
+    const now = this.#clock.now();
+    const at = Math.max(now, this.#next);
+    this.#next = at + this.#spacing;
+    if (at > now) await this.#clock.sleep(at - now);
+  }
+
+  /**
+   * Adopts the limit the server reports, which is authoritative where the
+   * documented table has drifted or the token carries a different quota.
+   */
+  observe(headers: { get(name: string): string | null }): void {
+    const reported = Number(headers.get('x-rate-limit'));
+    if (Number.isFinite(reported) && reported > 0) {
+      this.#spacing = 60_000 / (reported * RATE_SAFETY);
+    }
+  }
+}
+
+/**
  * Observation weight.
  *
  * DB1B reports passengers per record and `Market.passengers` means what it
@@ -162,14 +225,33 @@ async function pooled<T, R>(
  * 429 and 5xx are both transient here, and the API answers a throttle with a
  * `Retry-After` we should honour rather than guess at.
  */
-function defaultFetchJson(token: string) {
+function defaultFetchJson(token: string, clock: Clock = REAL_CLOCK) {
+  const limiters = new Map<string, RateLimiter>();
+  const limiterFor = (url: string) => {
+    const method = Object.keys(RATE_LIMITS).find((m) => url.includes(m)) ?? '';
+    let limiter = limiters.get(method);
+    if (!limiter) {
+      limiter = new RateLimiter(RATE_LIMITS[method] ?? 60, clock);
+      limiters.set(method, limiter);
+    }
+    return limiter;
+  };
+
   return async function fetchJson(url: string): Promise<unknown> {
+    const limiter = limiterFor(url);
     let delay = 500;
     for (let attempt = 0; ; attempt++) {
+      await limiter.take();
       const res = await fetch(url, {
-        headers: { 'X-Access-Token': token, accept: 'application/json' },
+        headers: {
+          'X-Access-Token': token,
+          accept: 'application/json',
+          // The docs single this out as the one header worth sending.
+          'accept-encoding': 'gzip, deflate',
+        },
         signal: AbortSignal.timeout(30_000),
       });
+      limiter.observe(res.headers);
       if (res.ok) return res.json();
 
       const retryable = res.status === 429 || res.status >= 500;
@@ -182,7 +264,7 @@ function defaultFetchJson(token: string) {
         );
       }
       const after = Number(res.headers.get('retry-after'));
-      await new Promise((r) => setTimeout(r, Number.isFinite(after) && after > 0 ? after * 1000 : delay));
+      await clock.sleep(Number.isFinite(after) && after > 0 ? after * 1000 : delay);
       delay *= 2;
     }
   };
@@ -347,9 +429,11 @@ export function createTravelpayoutsProvider(
 
       return {
         period,
-        attribution:
-          'Fares from the Travelpayouts Data API (Aviasales price cache), ' +
-          'used under the Travelpayouts affiliate terms.',
+        // A factual source credit. It deliberately does not say "under the
+        // affiliate terms" or anything else implying an endorsement or a
+        // relationship, which clause 6.6 of the network terms treats as a
+        // violation whether or not a mark is actually reproduced.
+        attribution: 'Fare data from the Aviasales price cache via the Travelpayouts Data API.',
         source:
           `Travelpayouts Data API, market=${market}, ${origins.length} seed origins. ` +
           'Each market weight is a count of cached quotes, not passengers.',

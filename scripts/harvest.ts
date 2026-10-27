@@ -136,12 +136,24 @@ const outPath = out ?? defaultOut;
 if (providerId === 'travelpayouts' && resolve(outPath) === resolve(PUBLISHED_OUT)) {
   console.error(
     'refusing to write Travelpayouts fares to the published dataset.\n\n' +
-    'Harvesting is fine; re-serving the result from the site is what needs the\n' +
-    'display terms confirmed first — specifically whether this project may:\n' +
-    '  1. store fares and re-serve them as static data, and for how long\n' +
-    '  2. display them without an affiliate click-through\n' +
-    '  3. attribute them in the form this repo uses\n' +
-    '  4. harvest at the rate this script uses\n\n' +
+    'Three of the four open questions are now answered from their own docs:\n' +
+    '  storing   — endorsed. "The data is stored for 7 days for all types of\n' +
+    '              queries. So it is recommended that you use them to generate\n' +
+    '              static pages." Re-harvest inside that window.\n' +
+    '  attributing — a factual source credit only. Clause 6.6 of the network\n' +
+    '              terms covers implying a connection even without using a mark.\n' +
+    '  rate       — 300/min for get_latest_prices, 600/min for prices_for_dates,\n' +
+    '              enforced by the provider and checked against X-Rate-Limit.\n\n' +
+    'The one that still blocks publishing is display without a click-through.\n' +
+    'It is not expressly permitted: clause 5.1 bars use "in ways other than\n' +
+    'those expressly permitted" or that "do not meet the goals of the Affiliate\n' +
+    'Network", and clause 4.2 ties the whole arrangement to users being\n' +
+    'redirected. A page that shows these fares and links nowhere does not meet\n' +
+    'that goal.\n\n' +
+    'The fix is the field this harvester currently drops: prices_for_dates\n' +
+    'returns a `link` per fare, which is the affiliate deep link. Carrying it\n' +
+    'through and linking each row out resolves the clause and makes the result\n' +
+    'bookable. That is a product decision, so it is not made here.\n\n' +
     `Until then, write somewhere else (the default is ${defaultOut.replace(ROOT, '.')}).`,
   );
   process.exit(2);

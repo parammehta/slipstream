@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createTravelpayoutsProvider } from '../src/harvest/travelpayouts.ts';
+import { createTravelpayoutsProvider, RateLimiter } from '../src/harvest/travelpayouts.ts';
 import { HarvestError } from '../src/harvest/provider.ts';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -192,4 +192,77 @@ test('one detail request per discovered market', async () => {
   // so a market must never need a second round trip.
   assert.ok(detail.length >= run.markets.length, 'fewer requests than markets');
   for (const url of detail) assert.match(url, /limit=1000/);
+});
+
+/* ---------- rate limiting ---------- */
+
+/** A clock that reports elapsed time without spending any. */
+function fakeClock() {
+  let now = 0;
+  return {
+    now: () => now,
+    sleep: async (ms: number) => { now += ms; },
+    advance: (ms: number) => { now += ms; },
+    get elapsed() { return now; },
+  };
+}
+
+test('spaces requests to stay inside the documented limit', async () => {
+  // prices_for_dates is capped at 600/minute. The first version of this
+  // harvester ran roughly 3,750/minute and only got away with it because
+  // enforcement happened to be lenient.
+  const clock = fakeClock();
+  const limiter = new RateLimiter(600, clock);
+  for (let i = 0; i < 600; i++) await limiter.take();
+  assert.ok(
+    clock.elapsed >= 60_000,
+    `600 requests took ${clock.elapsed}ms of a 60,000ms minute`,
+  );
+});
+
+test('concurrent callers get distinct slots, not the same one', async () => {
+  // The slot has to be claimed synchronously before awaiting, or every worker
+  // reads the same `next` and they all fire at once.
+  const clock = fakeClock();
+  const limiter = new RateLimiter(60, clock);
+  await Promise.all(Array.from({ length: 10 }, () => limiter.take()));
+  assert.ok(clock.elapsed > 0, 'ten concurrent takes collapsed into one slot');
+});
+
+test('a request within budget is not delayed', async () => {
+  const clock = fakeClock();
+  const limiter = new RateLimiter(600, clock);
+  await limiter.take();
+  const afterFirst = clock.elapsed;
+  clock.advance(5_000);
+  await limiter.take();
+  assert.equal(clock.elapsed, afterFirst + 5_000, 'waited despite idle time');
+});
+
+test('adopts the limit the server reports', async () => {
+  const clock = fakeClock();
+  const limiter = new RateLimiter(600, clock);
+  limiter.observe({ get: (n) => (n === 'x-rate-limit' ? '60' : null) });
+  for (let i = 0; i < 60; i++) await limiter.take();
+  assert.ok(clock.elapsed >= 60_000, `tightened limit ignored (${clock.elapsed}ms)`);
+});
+
+test('a missing or junk rate-limit header leaves the limit alone', async () => {
+  const clock = fakeClock();
+  const limiter = new RateLimiter(600, clock);
+  for (const value of [null, '', 'lots', '0', '-5']) {
+    limiter.observe({ get: () => value });
+  }
+  for (let i = 0; i < 600; i++) await limiter.take();
+  // Still the documented 600/min, not something a bad header widened.
+  assert.ok(clock.elapsed >= 60_000 && clock.elapsed < 120_000, `${clock.elapsed}ms`);
+});
+
+test('the attribution claims a source, not a relationship', async () => {
+  // Clause 6.6 of the network terms covers implying a connection even without
+  // reproducing a mark, so the credit stays factual.
+  const { instance } = provider();
+  const run = await instance.run(context);
+  assert.match(run.attribution, /Aviasales|Travelpayouts/);
+  assert.doesNotMatch(run.attribution, /partner|affiliate|endorse|official|under the/i);
 });
