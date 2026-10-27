@@ -144,6 +144,7 @@ src/core/
 src/harvest/
   provider.ts    the fare-source interface
   db1b.ts        US DOT DB1B, streaming and two-pass
+  travelpayouts.ts  Aviasales price cache, live quotes with real departures
   distribution.ts  fare curves as quantiles
   market.ts      observations -> markets
   emit.ts        markets -> generated module
@@ -217,9 +218,53 @@ Two streaming passes, ~25s: one to rank markets by traffic, one to build fare
 curves for the survivors. Holding every fare in memory would take gigabytes; a
 histogram per market takes a few megabytes.
 
-`src/harvest/provider.ts` is an interface, not a shape fitted to DB1B — a
-second source (an affiliate fare feed, say) implements `run()` and everything
-downstream is shared.
+### A second source: live quotes
+
+`src/harvest/provider.ts` is an interface, not a shape fitted to DB1B, and
+`travelpayouts.ts` is the proof: it implements the same `run()` and everything
+downstream — market aggregation, quantiles, the emitted module, the slab — is
+reused unchanged.
+
+It reads the [Travelpayouts Data API](https://support.travelpayouts.com/hc/en-us/categories/200358578),
+a cache of fares returned to real Aviasales searches in roughly the last 48
+hours. It needs a free account; the token goes in `.env.local`, which is
+gitignored.
+
+```bash
+node scripts/harvest.ts --provider travelpayouts --seeds 20 --limit 500
+```
+
+Discovery is two-phase. `get_latest_prices` per seed origin finds which city
+pairs the cache holds at all, then one `prices_for_dates` call per pair pulls
+the fares — `limit=1000` returns up to ~89 quotes for a busy route, so no
+market needs a second round trip. A 20-origin run takes **9 seconds** and turns
+8,339 live quotes into 342 markets. Rows are kept only when the publisher's own
+`show_to_affiliates` flag is set and the entry is still `actual`.
+
+Two things it has that DB1B does not: **real departure times**, so the schedule
+column could stop being modelled, and **today's prices** rather than a
+two-quarter-old settled average. On the 138 routes both sources cover, the live
+p50 runs **0.73×** the DB1B p50 — consistent, and the right direction, since a
+cache holds cheapest-available offers while DB1B averages what everyone
+actually paid, flexible and last-minute fares included.
+
+What it does not have is a reason to trust its route ranking. The cache only
+holds what somebody searched, so market weight is a count of quotes, not
+passengers. Measured: of 342 markets, 178 had one end outside the US domestic
+network, and the ten busiest by quote count were almost all US-to-CIS
+(JFK-TAS, JFK-VKO, LAX-EVN). Aviasales grew out of that market and its search
+traffic still shows it. Seeding from DB1B's busiest origins fixes the origin
+side and not the destination side.
+
+So the two sources are complementary rather than ranked, and the useful
+combination is to **weight markets by DB1B and price them from here**.
+
+**The harvested fares are not published yet.** Writing them to
+`src/core/markets.ts` is refused by `scripts/harvest.ts`, not merely
+discouraged, until the display terms are confirmed — whether this project may
+store and re-serve them as static data, for how long, without an affiliate
+click-through, and at what harvest rate. DB1B is public domain and has no such
+question; this does, and a note in a README is not a control.
 
 ## How it ships
 
@@ -331,7 +376,11 @@ discovered at runtime.
     entirely instead.
 12. ~~Open on the airport nearest the visitor~~ — done, guessed from the
     time zone (see [How it ships](#how-it-ships))
-13. International fares, once a provider's display terms allow it
+13. ~~A second provider: live quotes with real departure times~~ — done,
+    the [Travelpayouts price cache](#a-second-source-live-quotes). Harvests
+    and tests clean; publishing waits on its display terms.
+14. Replace modelled departure times with the observed ones, once those
+    fares may be published
 
 ## Design notes
 
