@@ -2332,7 +2332,9 @@ function boot() {
     // Busiest shard that is still quick to fetch. Defaulting to the busiest
     // outright picked the single largest file of ninety, so a cold first
     // visit downloaded the worst case before showing anything.
-    loadedOrigins = found ? [defaultShard(found).iata] : [];
+    // A shared link names its origin, so start on that shard instead of
+    // fetching the default first and replacing it a moment later.
+    loadedOrigins = found ? [originFromHash(found) ?? defaultShard(found).iata] : [];
     try {
       if (FORCE_INLINE) throw new Error("forced inline");
       if (typeof Worker !== "function" || typeof URL.createObjectURL !== "function") {
@@ -2418,8 +2420,16 @@ function onEngineMessage(msg) {
       }
     } else {
       state.carriers = new Set(CARRIERS.map((_, i) => i));
-      refreshControls();
-      $("loading").hidden = true;
+      try {
+        refreshControls();
+      } catch (err) {
+        // A failure repainting the controls must not strand the overlay on
+        // top of a corpus that actually loaded.
+        console.error("slipstream: refreshing controls failed", err);
+      } finally {
+        clearTimeout(loadWatchdog);
+        $("loading").hidden = true;
+      }
     }
 
     $("totalRows").textContent = msg.rowCount.toLocaleString();
@@ -2595,6 +2605,7 @@ function flushQueued() {
 }
 
 let queuedWindow = false;
+let loadWatchdog = 0;
 
 function requestWindow(first, visible) {
   // A query in flight will refresh the band anyway; a window already in
@@ -3470,6 +3481,19 @@ function readUrlState() {
   return true;
 }
 
+/**
+ * The origin a link asks for, read before the engine exists. The manifest
+ * carries the airport list, so the hash can be resolved without it.
+ */
+function originFromHash(found) {
+  const match = /(?:^|~)o([0-9a-z]+)(?:~|$)/.exec(location.hash.replace(/^#/, ""));
+  if (!match) return null;
+  const index = parseInt(match[1], 36);
+  const airport = Number.isFinite(index) ? found.airports[index] : null;
+  if (!airport) return null;
+  return found.shards.some((entry) => entry.iata === airport.iata) ? airport.iata : null;
+}
+
 /** Largest shard worth making a first-time visitor wait for. */
 const FIRST_LOAD_BUDGET = 400_000;
 
@@ -3529,6 +3553,13 @@ function reloadShards(origins) {
 
   loadedOrigins = wanted;
   const bytes = wanted.reduce((sum, code) => sum + (shardFor(code)?.bytes ?? 0), 0);
+  clearTimeout(loadWatchdog);
+  loadWatchdog = setTimeout(() => {
+    if (!$("loading").hidden) {
+      $("loadingText").textContent =
+        "Still fetching " + wanted.join(", ") + " — reload to retry";
+    }
+  }, 20000);
   $("loadingText").textContent =
     "Fetching " + wanted.length + (wanted.length === 1 ? " shard" : " shards") +
     " · " + (bytes / 1048576).toFixed(bytes > 1048576 ? 1 : 2) + "MB";
