@@ -15,13 +15,13 @@ const market = (over: Partial<Market> = {}): Market => ({
 });
 
 /** Emit a module, then import it the way the build will. */
-async function roundTrip(markets: Market[], cities = new Map<string, string>()) {
+async function roundTrip(markets: Market[], airports = new Map<string, { city: string; lat: number; lon: number }>()) {
   const dir = mkdtempSync(join(tmpdir(), 'slipstream-emit-'));
   mkdirSync(join(dir, 'core'), { recursive: true });
   cpSync(new URL('../src/core/market-data.ts', import.meta.url), join(dir, 'core/market-data.ts'));
   const file = join(dir, 'core/markets.ts');
   writeFileSync(file, emitMarketModule({
-    markets, cities, period: '2025 Q1', attribution: 'Test data', source: 'test',
+    markets, airports, period: '2025 Q1', attribution: 'Test data', source: 'test',
   }));
   const mod = await import(file);
   return mod.marketDataset() as MarketDataset;
@@ -62,11 +62,16 @@ test('airports and carriers are deduplicated across markets', async () => {
   assert.deepEqual(ds.carriers.sort(), ['AA', 'DL']);
 });
 
-test('city names are attached when known, code used when not', async () => {
-  const ds = await roundTrip([market()], new Map([['SFO', 'San Francisco']]));
+test('city names and coordinates are attached when known, code used when not', async () => {
+  const ds = await roundTrip([market()], new Map([['SFO', { city: 'San Francisco', lat: 37.6, lon: -122.4 }]]));
   const byIata = Object.fromEntries(ds.airports.map((a: MarketAirport) => [a.iata, a.city]));
   assert.equal(byIata.SFO, 'San Francisco');
   assert.equal(byIata.JFK, 'JFK');
+
+  const sfo = ds.airports.find((a: MarketAirport) => a.iata === 'SFO');
+  const jfk = ds.airports.find((a: MarketAirport) => a.iata === 'JFK');
+  assert.equal(sfo?.lat, 37.6, 'coordinates were dropped');
+  assert.equal(jfk?.lat, undefined, 'invented coordinates for an unknown airport');
 });
 
 test('markets with many carriers keep the significant ones', async () => {

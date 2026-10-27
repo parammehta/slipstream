@@ -25,6 +25,7 @@ const OUTPUT = join(ROOT, 'demo/search/index.html');
 const LANDING_SOURCE = join(ROOT, 'demo/landing.template.html');
 const LANDING_OUTPUT = join(ROOT, 'demo/index.html');
 const MARKER = '<!--@ENGINE@-->';
+const PAGE_MARKER = '<!--@PAGE@-->';
 
 /**
  * Dependency order, since the output is one flat classic script rather than a
@@ -63,6 +64,16 @@ export const BUNDLE: ReadonlyArray<{ dir: string; file: string }> = [
  * rather than silently shipping a broken page.
  */
 export const EXCLUDED_FROM_BUNDLE: ReadonlyArray<string> = ['index.ts', 'routes.ts', 'synth.ts'];
+
+/**
+ * Modules the page itself runs, as opposed to the engine. The engine travels
+ * as inert text that only the worker evaluates, so anything the page needs in
+ * its own scope — choosing which shard to fetch, before any engine exists —
+ * has to ship as an executing script of its own.
+ */
+export const PAGE_BUNDLE: ReadonlyArray<{ dir: string; file: string }> = [
+  { dir: 'src/core', file: 'geo.ts' },
+];
 
 /**
  * Wires the flattened bundle up to whichever host it finds itself in: a real
@@ -172,12 +183,24 @@ function assertNoDuplicateDeclarations(bundle: string): void {
   }
 }
 
+function buildPageScript(): string {
+  const parts = PAGE_BUNDLE.map(({ dir, file }) => {
+    const source = readFileSync(join(ROOT, dir, file), 'utf8');
+    return `/* ---- ${dir}/${file} ---- */\n${flatten(source)}`;
+  });
+  const body = ['"use strict";', parts.join('\n\n')].join('\n\n');
+  assertNoDuplicateDeclarations(body);
+  return ['<script>', body, '</script>'].join('\n');
+}
+
 export function renderDemo(): string {
   const template = readFileSync(TEMPLATE, 'utf8');
-  if (!template.includes(MARKER)) {
-    throw new Error(`build-demo: ${MARKER} missing from the template`);
+  for (const marker of [MARKER, PAGE_MARKER]) {
+    if (!template.includes(marker)) {
+      throw new Error(`build-demo: ${marker} missing from the template`);
+    }
   }
-  return template.replace(MARKER, buildEngine());
+  return template.replace(MARKER, buildEngine()).replace(PAGE_MARKER, buildPageScript());
 }
 
 /** The landing page is static; the build only copies it into the output. */

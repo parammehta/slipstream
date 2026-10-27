@@ -9,6 +9,10 @@
 export interface MarketAirport {
   iata: string;
   city: string;
+  /** Degrees, where the source knew them. Absent airports simply cannot be
+   *  offered as a nearby suggestion. */
+  lat?: number;
+  lon?: number;
 }
 
 export interface MarketCarrierShare {

@@ -519,7 +519,7 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
       </div>
 
       <div class="group oneway-only">
-        <h2>Origin</h2>
+        <h2>Origin <em id="originNote"></em></h2>
         <select class="origin" id="originSelect" aria-label="Origin airport"></select>
       </div>
 
@@ -601,6 +601,8 @@ select.origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 </div>
 
 <!--@ENGINE@-->
+
+<!--@PAGE@-->
 
 <script>
 "use strict";
@@ -796,7 +798,9 @@ function boot() {
     // visit downloaded the worst case before showing anything.
     // A shared link names its origin, so start on that shard instead of
     // fetching the default first and replacing it a moment later.
-    pendingOrigins = found ? [originFromHash(found) ?? defaultShard(found).iata] : [];
+    pendingOrigins = found
+      ? [originFromHash(found) ?? nearbyShard(found) ?? defaultShard(found).iata]
+      : [];
     loadedOrigins = [];
     try {
       if (FORCE_INLINE) throw new Error("forced inline");
@@ -1970,6 +1974,24 @@ function originFromHash(found) {
   return found.shards.some((entry) => entry.iata === airport.iata) ? airport.iata : null;
 }
 
+/**
+ * The airport nearest the visitor, guessed from their time zone. No request,
+ * no permission prompt and nothing disclosed to anyone: Intl already knows
+ * the zone, and a zone pins a region closely enough to beat a fixed default.
+ * Returns null when the zone is outside the data, when the nearest airport is
+ * too far to be useful, or when it has no published shard.
+ */
+let suggestedOrigin = null;
+
+function nearbyShard(found) {
+  const withShards = found.shards
+    .map((entry) => found.airports.find((airport) => airport.iata === entry.iata))
+    .filter(Boolean);
+  const nearest = suggestOrigin(withShards);
+  suggestedOrigin = nearest ? nearest.iata : null;
+  return suggestedOrigin;
+}
+
 /** Largest shard worth making a first-time visitor wait for. */
 const FIRST_LOAD_BUDGET = 400_000;
 
@@ -2038,6 +2060,14 @@ function reconcileOriginLabel() {
   const sel = $("originSelect");
   if (sel) sel.value = String(state.origin);
   $("routeLabel").textContent = routeLabelText();
+
+  // Say when the airport was guessed rather than chosen, so a wrong guess
+  // reads as a starting point instead of as the page being confused.
+  const note = $("originNote");
+  if (note) {
+    const guessed = loadedOrigins.length === 1 && loadedOrigins[0] === suggestedOrigin;
+    note.textContent = guessed ? "nearest to you" : "";
+  }
 }
 
 /** Reloads the engine with a different set of shards. */

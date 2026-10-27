@@ -42,27 +42,42 @@ if (!existsSync(csvPath)) {
   process.exit(2);
 }
 
-/** City names are not in DB1B; OpenFlights has them and needs no key. */
-async function fetchCities(log: (m: string) => void): Promise<Map<string, string>> {
-  const cities = new Map<string, string>();
+export interface AirportMeta {
+  city: string;
+  lat: number;
+  lon: number;
+}
+
+/**
+ * DB1B carries neither city names nor coordinates. OpenFlights has both and
+ * needs no key. Coordinates are what let the page suggest a nearby airport.
+ */
+async function fetchAirportMeta(log: (m: string) => void): Promise<Map<string, AirportMeta>> {
+  const meta = new Map<string, AirportMeta>();
   try {
-    log('fetching city names from OpenFlights');
+    log('fetching airport names and coordinates from OpenFlights');
     const res = await fetch(
       'https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat',
       { signal: AbortSignal.timeout(60_000) },
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     for (const line of (await res.text()).split('\n')) {
-      // id, name, city, country, iata, ...  — quoted CSV
-      const m = line.match(/^[^,]*,"([^"]*)","([^"]*)","[^"]*","([A-Z]{3})"/);
-      if (m) cities.set(m[3], m[2] || m[1]);
+      // id, name, city, country, iata, icao, lat, lon, ...  — quoted CSV
+      const m = line.match(
+        /^[^,]*,"([^"]*)","([^"]*)","[^"]*","([A-Z]{3})","[^"]*",(-?[\d.]+),(-?[\d.]+)/,
+      );
+      if (!m) continue;
+      const lat = Number(m[4]);
+      const lon = Number(m[5]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      meta.set(m[3], { city: m[2] || m[1], lat, lon });
     }
-    log(`  ${cities.size.toLocaleString()} city names`);
+    log(`  ${meta.size.toLocaleString()} airports located`);
   } catch (err) {
-    // Not fatal: the UI falls back to the IATA code.
-    log(`  city lookup unavailable (${(err as Error).message}); codes will be used`);
+    // Not fatal: the UI falls back to the IATA code and skips the suggestion.
+    log(`  airport lookup unavailable (${(err as Error).message}); codes will be used`);
   }
-  return cities;
+  return meta;
 }
 
 const provider: HarvestProvider = createDb1bProvider({ csvPath, period, limit, minPassengers });
@@ -75,14 +90,14 @@ try {
   const cacheDir = join(ROOT, '.data');
   if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
 
-  const [run, cities] = await Promise.all([
+  const [run, airportMeta] = await Promise.all([
     provider.run({ cacheDir, log }),
-    fetchCities(log),
+    fetchAirportMeta(log),
   ]);
 
   const source = emitMarketModule({
     markets: run.markets,
-    cities,
+    airports: airportMeta,
     period: run.period,
     attribution: run.attribution,
     source: run.source,

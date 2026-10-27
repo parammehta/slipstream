@@ -135,6 +135,7 @@ src/core/
   query.ts       windowed materialization for the virtual list
   combine.ts     top-k itineraries over a frontier heap
   concat.ts      joins shards into one slab
+  geo.ts         time zone -> nearest airport, for the opening suggestion
   bitset.ts      membership bitsets
   markets.ts     GENERATED — harvested markets and their fare curves
   offers.ts      offers sampled from real fare curves
@@ -242,6 +243,17 @@ Measured on the deployed site:
 | Busiest shard (MCO, 60,612 offers) | 1,215KB | 545KB |
 | One global file instead | 19.3MB | 9.4MB |
 
+The page opens on the airport nearest the visitor, guessed from the time zone
+`Intl` already reports. That costs no request, no permission prompt and
+discloses nothing: an IP lookup would mean either handing a third party the
+visitor's address on every page view or putting a function back on a path
+that deliberately has none, and the browser's geolocation API interrupts a
+first visit with a prompt most people decline. A zone pins a region closely
+enough to beat a fixed default, and the control says "nearest to you" so a
+wrong guess reads as a starting point rather than a mistake. Outside the
+data's regions, or when the nearest airport is more than 500km away, no guess
+is offered.
+
 Shards are generated at build time, not committed, so the repository does not
 carry 19MB of derived binaries. Opened from disk there is nothing to fetch and
 the page generates offers in-process instead.
@@ -283,7 +295,7 @@ Query-string switches:
 Requires Node 24+ (native TypeScript stripping, `node:test`). No install step.
 
 ```bash
-npm test               # 125 tests, including the demo staleness check
+npm test               # 153 tests, including the demo staleness check
 npm run bench          # or: node scripts/bench.ts 5000000
 npm run build:demo     # regenerate the pages from src/core
 npm run build:slabs    # partition the corpus into demo/data

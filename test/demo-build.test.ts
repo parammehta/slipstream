@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { renderDemo, BUNDLE, EXCLUDED_FROM_BUNDLE } from '../scripts/build-demo.ts';
+import { renderDemo, BUNDLE, PAGE_BUNDLE, EXCLUDED_FROM_BUNDLE } from '../scripts/build-demo.ts';
 
 const committed = readFileSync(new URL('../demo/search/index.html', import.meta.url), 'utf8');
 
@@ -50,7 +50,9 @@ test('every core module is inlined', () => {
 
   assert.ok(modules.length >= 9, `only found ${modules.length} core modules`);
 
-  const bundled = new Set(BUNDLE.filter((b) => b.dir === 'src/core').map((b) => b.file));
+  const bundled = new Set(
+    [...BUNDLE, ...PAGE_BUNDLE].filter((b) => b.dir === 'src/core').map((b) => b.file),
+  );
   const excluded = new Set(EXCLUDED_FROM_BUNDLE);
   for (const file of modules) {
     assert.ok(

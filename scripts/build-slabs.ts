@@ -105,7 +105,11 @@ const manifest = {
   rows: ROWS,
   // The dictionaries live here too, so the page can populate its airport and
   // airline pickers before fetching a single shard.
-  airports: dataset.airports.map((a) => ({ iata: a.iata, city: a.city })),
+  airports: dataset.airports.map((a) => ({
+    iata: a.iata,
+    city: a.city,
+    ...(a.lat !== undefined ? { lat: a.lat, lon: a.lon } : {}),
+  })),
   carriers: dataset.carriers,
   shards,
 };

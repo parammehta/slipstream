@@ -16,10 +16,19 @@ import { QUANTILE_COUNT } from './distribution.ts';
 /** origin u16, dest u16, distance u16, passengers u32, connecting u8, carrierCount u8, 9 × fare u16. */
 const FIXED_BYTES = 2 + 2 + 2 + 4 + 1 + 1 + QUANTILE_COUNT * 2;
 
+export interface AirportMeta {
+  city: string;
+  lat: number;
+  lon: number;
+}
+
 export interface EmitInput {
   markets: Market[];
-  /** IATA -> city name, for display. Missing entries fall back to the code. */
-  cities: Map<string, string>;
+  /**
+   * IATA -> name and position. Missing entries fall back to the code and
+   * carry no coordinates, which only costs them the nearby-airport guess.
+   */
+  airports: Map<string, AirportMeta>;
   period: string;
   attribution: string;
   source: string;
@@ -29,7 +38,7 @@ export function emitMarketModule(input: EmitInput): string {
   const { markets } = input;
 
   const airportIndex = new Map<string, number>();
-  const airports: Array<{ iata: string; city: string }> = [];
+  const airports: Array<{ iata: string; city: string; lat?: number; lon?: number }> = [];
   const carrierIndex = new Map<string, number>();
   const carriers: string[] = [];
 
@@ -38,7 +47,12 @@ export function emitMarketModule(input: EmitInput): string {
     if (id === undefined) {
       id = airports.length;
       airportIndex.set(iata, id);
-      airports.push({ iata, city: input.cities.get(iata) ?? iata });
+      const meta = input.airports.get(iata);
+      airports.push(
+        meta
+          ? { iata, city: meta.city, lat: +meta.lat.toFixed(4), lon: +meta.lon.toFixed(4) }
+          : { iata, city: iata },
+      );
     }
     return id;
   };
