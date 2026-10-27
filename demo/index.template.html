@@ -955,12 +955,24 @@ function onEngineMessage(msg) {
   }
 }
 
+/**
+ * The day the calendar starts on.
+ *
+ * Slabs are built with the corpus anchored on the build date, so a fresh
+ * deploy and today agree. A deploy that has sat for a while would otherwise
+ * offer departures in the past, so the calendar falls forward to today and
+ * the corpus rides along — the schedules are generated either way, and a
+ * date nobody can fly is worse than one that is a few rows off.
+ */
+let displayBase = 0;
+
 function buildDateLabels() {
+  displayBase = Math.max(meta.baseDayEpoch, todayEpochDay());
   const fmt = new Intl.DateTimeFormat(undefined, {
     weekday: "short", day: "numeric", month: "short", timeZone: "UTC",
   });
   for (let day = 0; day < 70; day++) {
-    const date = new Date((meta.baseDayEpoch + day) * 86400000);
+    const date = new Date((displayBase + day) * 86400000);
     dateLabels.push(fmt.format(date));
     dayNumbers.push(date.getUTCDate());
   }
@@ -992,8 +1004,8 @@ function arrivalShift(originCode, destCode, depMin, durationMin) {
   if (hit !== undefined) return hit;
 
   const shift = arrivalShiftMinutes(
-    originCode, destCode,
-    meta.baseDayEpoch * 1440 + depMin,
+    AIRPORT_ZONES[originCode], AIRPORT_ZONES[destCode],
+    displayBase * 1440 + depMin,
     durationMin,
     zoneFormatters,
   );
@@ -1181,7 +1193,7 @@ function buildCalendar() {
   }
 
   // Blank cells so day 0 lands under its real weekday.
-  const firstDow = new Date(meta.baseDayEpoch * 86400000).getUTCDay();
+  const firstDow = new Date(displayBase * 86400000).getUTCDay();
   for (let i = 0; i < firstDow; i++) {
     const pad = document.createElement("div");
     pad.className = "day pad";

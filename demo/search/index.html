@@ -1673,6 +1673,96 @@ function marketDataset()                {
   return cached;
 }
 
+/* ---- src/core/tz.ts ---- */
+/**
+ * Reading an arrival clock at the destination.
+ *
+ * The slab stores a local departure and an elapsed duration, and arrival is
+ * their sum. That sum is a clock still running at the origin: on LAX-JFK it
+ * is three hours fast, and a red-eye lands on the wrong date entirely. These
+ * are what put it right.
+ *
+ * The correction cannot be a per-airport constant. LAX-JFK is three hours all
+ * year because both ends keep DST, but LAX-PHX is one hour in January and
+ * zero in July because Arizona does not, and LAX-HNL moves the other way. It
+ * has to be read at the instants that actually matter.
+ */
+/** Reusing formatters matters: constructing one costs far more than a call. */
+
+/**
+ * Minutes east of UTC for `zone` at `instant` (epoch milliseconds).
+ *
+ * Formatting the instant in the zone and reading the wall clock back is the
+ * only way to get this from the platform; there is no offset API.
+ */
+function zoneOffsetMinutes(
+  zone        ,
+  instant        ,
+  formatters                 = new Map(),
+)         {
+  let fmt = formatters.get(zone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+    formatters.set(zone, fmt);
+  }
+  const parts = fmt.formatToParts(new Date(instant));
+  const field = (type        ) => {
+    const part = parts.find((p) => p.type === type);
+    return part ? Number(part.value) : 0;
+  };
+  const wall = Date.UTC(
+    field('year'), field('month') - 1, field('day'), field('hour'), field('minute'),
+  );
+  // The wall clock carries no seconds, so the raw difference includes up to
+  // 59s of the instant's own; every real zone offset is a whole minute.
+  return Math.round((wall - instant) / 60000);
+}
+
+/**
+ * Minutes to add to a stored arrival so it reads at the destination.
+ *
+ * `depMinutesEpoch` is the departure as minutes since the Unix epoch on the
+ * origin's own wall clock. Zero is returned when either zone is missing, so
+ * an airport the table does not know shows the uncorrected clock rather than
+ * a wrong one.
+ */
+function arrivalShiftMinutes(
+  from                    ,
+  to                    ,
+  depMinutesEpoch        ,
+  durationMin        ,
+  formatters                 = new Map(),
+)         {
+  if (!from || !to || from === to) return 0;
+
+  // The departure is a wall clock, so the instant it names depends on the very
+  // offset being looked up. Reading it once at the naive instant and again at
+  // the corrected one settles it everywhere except inside the hour a spring
+  // change skips, which no real departure occupies.
+  const naive = depMinutesEpoch * 60000;
+  const approx = zoneOffsetMinutes(from, naive, formatters);
+  const originOffset = zoneOffsetMinutes(from, naive - approx * 60000, formatters);
+  const arrives = naive - originOffset * 60000 + durationMin * 60000;
+
+  return zoneOffsetMinutes(to, arrives, formatters) - originOffset;
+}
+
+/**
+ * Today as whole days since the Unix epoch, UTC.
+ *
+ * This is the corpus anchor. A generated corpus describes the next couple of
+ * months of departures, so pinning it to a constant means that the day the
+ * constant falls behind, the site starts offering flights in the past.
+ */
+function todayEpochDay()         {
+  return Math.floor(Date.now() / 86_400_000);
+}
+
 /* ---- src/core/offers.ts ---- */
 /** mulberry32 — small, fast, and seedable so benchmarks are reproducible. */
 function mulberry32(seed        )               {
@@ -1702,6 +1792,7 @@ function generateOffersFromMarkets(
   dataset               ,
   rowCount        ,
   seed = 1,
+  baseDayEpoch = todayEpochDay(),
 )            {
   const rand = mulberry32(seed);
   const { markets } = dataset;
@@ -1775,7 +1866,7 @@ function generateOffersFromMarkets(
 
   return {
     rowCount,
-    baseDayEpoch: 20000,
+    baseDayEpoch,
     columns,
     dicts: {
       airports: dataset.airports.map((a) => a.iata),
@@ -2406,7 +2497,6 @@ const AIRPORT_ZONES                         = {
  * zero in July because Arizona does not, and LAX-HNL moves the other way. It
  * has to be read at the instants that actually matter.
  */
-
 /** Reusing formatters matters: constructing one costs far more than a call. */
 
 /**
@@ -2447,18 +2537,17 @@ function zoneOffsetMinutes(
  * Minutes to add to a stored arrival so it reads at the destination.
  *
  * `depMinutesEpoch` is the departure as minutes since the Unix epoch on the
- * origin's own wall clock. Zero is returned when either airport has no zone,
- * so an unknown airport shows the uncorrected clock rather than a wrong one.
+ * origin's own wall clock. Zero is returned when either zone is missing, so
+ * an airport the table does not know shows the uncorrected clock rather than
+ * a wrong one.
  */
 function arrivalShiftMinutes(
-  originIata        ,
-  destIata        ,
+  from                    ,
+  to                    ,
   depMinutesEpoch        ,
   durationMin        ,
   formatters                 = new Map(),
 )         {
-  const from = AIRPORT_ZONES[originIata];
-  const to = AIRPORT_ZONES[destIata];
   if (!from || !to || from === to) return 0;
 
   // The departure is a wall clock, so the instant it names depends on the very
@@ -2471,6 +2560,17 @@ function arrivalShiftMinutes(
   const arrives = naive - originOffset * 60000 + durationMin * 60000;
 
   return zoneOffsetMinutes(to, arrives, formatters) - originOffset;
+}
+
+/**
+ * Today as whole days since the Unix epoch, UTC.
+ *
+ * This is the corpus anchor. A generated corpus describes the next couple of
+ * months of departures, so pinning it to a constant means that the day the
+ * constant falls behind, the site starts offering flights in the past.
+ */
+function todayEpochDay()         {
+  return Math.floor(Date.now() / 86_400_000);
 }
 </script>
 
@@ -2825,12 +2925,24 @@ function onEngineMessage(msg) {
   }
 }
 
+/**
+ * The day the calendar starts on.
+ *
+ * Slabs are built with the corpus anchored on the build date, so a fresh
+ * deploy and today agree. A deploy that has sat for a while would otherwise
+ * offer departures in the past, so the calendar falls forward to today and
+ * the corpus rides along — the schedules are generated either way, and a
+ * date nobody can fly is worse than one that is a few rows off.
+ */
+let displayBase = 0;
+
 function buildDateLabels() {
+  displayBase = Math.max(meta.baseDayEpoch, todayEpochDay());
   const fmt = new Intl.DateTimeFormat(undefined, {
     weekday: "short", day: "numeric", month: "short", timeZone: "UTC",
   });
   for (let day = 0; day < 70; day++) {
-    const date = new Date((meta.baseDayEpoch + day) * 86400000);
+    const date = new Date((displayBase + day) * 86400000);
     dateLabels.push(fmt.format(date));
     dayNumbers.push(date.getUTCDate());
   }
@@ -2862,8 +2974,8 @@ function arrivalShift(originCode, destCode, depMin, durationMin) {
   if (hit !== undefined) return hit;
 
   const shift = arrivalShiftMinutes(
-    originCode, destCode,
-    meta.baseDayEpoch * 1440 + depMin,
+    AIRPORT_ZONES[originCode], AIRPORT_ZONES[destCode],
+    displayBase * 1440 + depMin,
     durationMin,
     zoneFormatters,
   );
@@ -3051,7 +3163,7 @@ function buildCalendar() {
   }
 
   // Blank cells so day 0 lands under its real weekday.
-  const firstDow = new Date(meta.baseDayEpoch * 86400000).getUTCDay();
+  const firstDow = new Date(displayBase * 86400000).getUTCDay();
   for (let i = 0; i < firstDow; i++) {
     const pad = document.createElement("div");
     pad.className = "day pad";

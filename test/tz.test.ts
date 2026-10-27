@@ -2,11 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { zoneOffsetMinutes, arrivalShiftMinutes } from '../src/core/tz.ts';
 import { AIRPORT_ZONES } from '../src/core/zones.ts';
+import { todayEpochDay } from '../src/core/tz.ts';
 import { marketDataset } from '../src/core/markets.ts';
 
 /** Departure as minutes since the epoch on the origin's wall clock. */
 const depart = (y: number, m: number, d: number, hh: number, mm = 0) =>
   Date.UTC(y, m - 1, d, hh, mm) / 60000;
+
+/** The table maps airport to zone; tz.ts deals only in zones. */
+const Z = AIRPORT_ZONES;
 
 const JAN = Date.UTC(2026, 0, 15, 12);
 const JUL = Date.UTC(2026, 6, 15, 12);
@@ -28,28 +32,28 @@ test('zones that do not keep DST hold still', () => {
 
 test('shifts a transcontinental arrival by three hours', () => {
   // 08:00 out of LAX, 5h20 in the air, lands 16:20 in New York — not 13:20.
-  const shift = arrivalShiftMinutes('LAX', 'JFK', depart(2026, 6, 15, 8), 320);
+  const shift = arrivalShiftMinutes(Z.LAX, Z.JFK, depart(2026, 6, 15, 8), 320);
   assert.equal(shift, 180);
 });
 
 test('the shift is the same in winter when both ends keep DST', () => {
-  const summer = arrivalShiftMinutes('LAX', 'JFK', depart(2026, 6, 15, 8), 320);
-  const winter = arrivalShiftMinutes('LAX', 'JFK', depart(2026, 1, 15, 8), 320);
+  const summer = arrivalShiftMinutes(Z.LAX, Z.JFK, depart(2026, 6, 15, 8), 320);
+  const winter = arrivalShiftMinutes(Z.LAX, Z.JFK, depart(2026, 1, 15, 8), 320);
   assert.equal(summer, winter, 'LAX-JFK should be 3h all year');
 });
 
 test('the shift moves across the year when one end does not keep DST', () => {
   // The case a per-airport constant gets wrong for half the year.
-  const winter = arrivalShiftMinutes('LAX', 'PHX', depart(2026, 1, 15, 9), 85);
-  const summer = arrivalShiftMinutes('LAX', 'PHX', depart(2026, 6, 15, 9), 85);
+  const winter = arrivalShiftMinutes(Z.LAX, Z.PHX, depart(2026, 1, 15, 9), 85);
+  const summer = arrivalShiftMinutes(Z.LAX, Z.PHX, depart(2026, 6, 15, 9), 85);
   assert.equal(winter, 60);
   assert.equal(summer, 0);
 });
 
 test('westbound shifts are negative', () => {
-  const shift = arrivalShiftMinutes('JFK', 'LAX', depart(2026, 6, 15, 8), 360);
+  const shift = arrivalShiftMinutes(Z.JFK, Z.LAX, depart(2026, 6, 15, 8), 360);
   assert.equal(shift, -180);
-  assert.equal(arrivalShiftMinutes('LAX', 'HNL', depart(2026, 6, 15, 9), 340), -180);
+  assert.equal(arrivalShiftMinutes(Z.LAX, Z.HNL, depart(2026, 6, 15, 9), 340), -180);
 });
 
 test('a late departure lands on the next date once corrected', () => {
@@ -58,7 +62,7 @@ test('a late departure lands on the next date once corrected', () => {
   const dep = depart(2026, 6, 15, 17, 37);
   const duration = 344;
   const naiveArrival = dep + duration;
-  const corrected = naiveArrival + arrivalShiftMinutes('LAX', 'JFK', dep, duration);
+  const corrected = naiveArrival + arrivalShiftMinutes(Z.LAX, Z.JFK, dep, duration);
   const day = (min: number) => Math.floor(min / 1440);
   const clock = (min: number) => ((min % 1440) + 1440) % 1440;
 
@@ -71,20 +75,20 @@ test('a late departure lands on the next date once corrected', () => {
 test('a red-eye keeps its next-day marker and gains three hours', () => {
   const dep = depart(2026, 6, 15, 23, 35);
   const duration = 319;
-  const corrected = dep + duration + arrivalShiftMinutes('LAX', 'JFK', dep, duration);
+  const corrected = dep + duration + arrivalShiftMinutes(Z.LAX, Z.JFK, dep, duration);
   const day = (min: number) => Math.floor(min / 1440);
   assert.equal(day(corrected) - day(dep), 1);
   assert.equal(((corrected % 1440) + 1440) % 1440, 7 * 60 + 54, '07:54, not 04:54');
 });
 
 test('same zone needs no shift', () => {
-  assert.equal(arrivalShiftMinutes('LAX', 'SFO', depart(2026, 6, 15, 9), 85), 0);
-  assert.equal(arrivalShiftMinutes('JFK', 'BOS', depart(2026, 1, 15, 9), 75), 0);
+  assert.equal(arrivalShiftMinutes(Z.LAX, Z.SFO, depart(2026, 6, 15, 9), 85), 0);
+  assert.equal(arrivalShiftMinutes(Z.JFK, Z.BOS, depart(2026, 1, 15, 9), 75), 0);
 });
 
 test('an airport with no zone is left alone rather than guessed at', () => {
-  assert.equal(arrivalShiftMinutes('LAX', 'ZZZ', depart(2026, 6, 15, 9), 300), 0);
-  assert.equal(arrivalShiftMinutes('ZZZ', 'JFK', depart(2026, 6, 15, 9), 300), 0);
+  assert.equal(arrivalShiftMinutes(Z.LAX, undefined, depart(2026, 6, 15, 9), 300), 0);
+  assert.equal(arrivalShiftMinutes(undefined, Z.JFK, depart(2026, 6, 15, 9), 300), 0);
 });
 
 test('a flight that crosses the autumn DST change is right at both ends', () => {
@@ -92,7 +96,7 @@ test('a flight that crosses the autumn DST change is right at both ends', () => 
   // it sees a different offset at each end, which is why the offsets are read
   // at two instants rather than one.
   const dep = depart(2026, 11, 1, 0, 30);
-  const shift = arrivalShiftMinutes('LAX', 'JFK', dep, 330);
+  const shift = arrivalShiftMinutes(Z.LAX, Z.JFK, dep, 330);
   // LAX is still on PDT (-7) at 00:30; JFK has already returned to EST (-5).
   assert.equal(shift, 120);
 });
@@ -124,4 +128,14 @@ test('reusing formatters gives the same answers as fresh ones', () => {
       );
     }
   }
+});
+
+test('today is today, in whole UTC days', () => {
+  const today = todayEpochDay();
+  assert.equal(today, Math.floor(Date.now() / 86_400_000));
+  // A date, not a timestamp: ~20k today, and it must not be a float.
+  assert.equal(today, Math.trunc(today));
+  const asDate = new Date(today * 86_400_000);
+  assert.equal(asDate.getUTCHours(), 0, 'should land on midnight UTC');
+  assert.equal(asDate.getUTCDate(), new Date().getUTCDate());
 });

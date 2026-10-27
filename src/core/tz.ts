@@ -11,8 +11,6 @@
  * zero in July because Arizona does not, and LAX-HNL moves the other way. It
  * has to be read at the instants that actually matter.
  */
-import { AIRPORT_ZONES } from './zones.ts';
-
 /** Reusing formatters matters: constructing one costs far more than a call. */
 export type ZoneFormatters = Map<string, Intl.DateTimeFormat>;
 
@@ -54,18 +52,17 @@ export function zoneOffsetMinutes(
  * Minutes to add to a stored arrival so it reads at the destination.
  *
  * `depMinutesEpoch` is the departure as minutes since the Unix epoch on the
- * origin's own wall clock. Zero is returned when either airport has no zone,
- * so an unknown airport shows the uncorrected clock rather than a wrong one.
+ * origin's own wall clock. Zero is returned when either zone is missing, so
+ * an airport the table does not know shows the uncorrected clock rather than
+ * a wrong one.
  */
 export function arrivalShiftMinutes(
-  originIata: string,
-  destIata: string,
+  from: string | undefined,
+  to: string | undefined,
   depMinutesEpoch: number,
   durationMin: number,
   formatters: ZoneFormatters = new Map(),
 ): number {
-  const from = AIRPORT_ZONES[originIata];
-  const to = AIRPORT_ZONES[destIata];
   if (!from || !to || from === to) return 0;
 
   // The departure is a wall clock, so the instant it names depends on the very
@@ -78,4 +75,15 @@ export function arrivalShiftMinutes(
   const arrives = naive - originOffset * 60000 + durationMin * 60000;
 
   return zoneOffsetMinutes(to, arrives, formatters) - originOffset;
+}
+
+/**
+ * Today as whole days since the Unix epoch, UTC.
+ *
+ * This is the corpus anchor. A generated corpus describes the next couple of
+ * months of departures, so pinning it to a constant means that the day the
+ * constant falls behind, the site starts offering flights in the past.
+ */
+export function todayEpochDay(): number {
+  return Math.floor(Date.now() / 86_400_000);
 }

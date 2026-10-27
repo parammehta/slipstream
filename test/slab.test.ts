@@ -1,4 +1,7 @@
 import { test } from 'node:test';
+import { generateOffersFromMarkets } from '../src/core/offers.ts';
+import { marketDataset } from '../src/core/markets.ts';
+import { todayEpochDay } from '../src/core/tz.ts';
 import assert from 'node:assert/strict';
 import { encodeSlab } from '../src/core/encode.ts';
 import { decodeSlab } from '../src/core/decode.ts';
@@ -74,4 +77,26 @@ test('is dramatically smaller than the equivalent JSON', () => {
   // but not the decode cost, which is the reason the format exists.
   const ratio = json / binary;
   assert.ok(ratio > 6, `expected >6x reduction, got ${ratio.toFixed(1)}x`);
+});
+
+test('a generated corpus starts today, not on a constant', () => {
+  // It shipped anchored to 20000 (2024-10-04), so the live date grid was
+  // offering departures two years in the past.
+  const corpus = generateOffersFromMarkets(marketDataset(), 500, 3);
+  assert.equal(corpus.baseDayEpoch, todayEpochDay());
+  assert.ok(corpus.baseDayEpoch > 20000, 'still pinned to the old constant');
+});
+
+test('an explicit anchor is honoured, so builds can be reproduced', () => {
+  const corpus = generateOffersFromMarkets(marketDataset(), 500, 3, 20000);
+  assert.equal(corpus.baseDayEpoch, 20000);
+});
+
+test('departures land inside the corpus window', () => {
+  const corpus = generateOffersFromMarkets(marketDataset(), 2000, 5);
+  const dep = corpus.columns.depMin as Int32Array;
+  for (let i = 0; i < dep.length; i++) {
+    const day = Math.floor(dep[i] / 1440);
+    assert.ok(day >= 0 && day < 70, `day ${day} is outside the 70 the page labels`);
+  }
 });

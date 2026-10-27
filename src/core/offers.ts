@@ -2,6 +2,7 @@ import { OFFER_SCHEMA, allocColumn, type TypedArray } from './format.ts';
 import type { SlabInput } from './encode.ts';
 import { cumulativeWeights, pickWeighted, type MarketDataset } from './market-data.ts';
 import { sampleFromQuantiles } from '../harvest/distribution.ts';
+import { todayEpochDay } from './tz.ts';
 
 /** mulberry32 — small, fast, and seedable so benchmarks are reproducible. */
 function mulberry32(seed: number): () => number {
@@ -31,6 +32,7 @@ export function generateOffersFromMarkets(
   dataset: MarketDataset,
   rowCount: number,
   seed = 1,
+  baseDayEpoch = todayEpochDay(),
 ): SlabInput {
   const rand = mulberry32(seed);
   const { markets } = dataset;
@@ -104,7 +106,7 @@ export function generateOffersFromMarkets(
 
   return {
     rowCount,
-    baseDayEpoch: 20000,
+    baseDayEpoch,
     columns,
     dicts: {
       airports: dataset.airports.map((a) => a.iata),

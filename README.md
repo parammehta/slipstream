@@ -195,6 +195,15 @@ duration from distance, connection likelihood from each market's *observed*
 connecting share, block times jittered because real aircraft differ. Fares,
 routes, carriers and carrier mix come from the data; clocks do not.
 
+**When the corpus starts: today.** A generated corpus describes the next
+sixty days of departures, so its anchor cannot be a constant. It shipped
+pinned to day 20000 — 2024-10-04 — which meant the live date grid was
+offering departures two years in the past. `scripts/build-slabs.ts` now
+anchors it on the build date, and the page falls forward to today if it finds
+itself served from a deploy that has sat for a while, because a date nobody
+can fly is worse than schedules a few rows off. The anchor is still
+overridable, so a build can be reproduced exactly.
+
 **What is not modelled: time zones.** A departure is a local clock at the
 origin and duration is elapsed time, so their sum — which is how the file
 stores arrival, and why the column is not stored at all — is a clock still
