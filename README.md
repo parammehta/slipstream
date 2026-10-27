@@ -67,7 +67,7 @@ The worker is kept because the architecture should hold at the dataset sizes
 this design exists for, not just at the one the demo ships with.
 
 Load-time costs: decode 0.22ms (zero-copy), argsort 10–19ms per sort key.
-Slab size is 20.0 bytes/row — 19MB for 1M rows, ~7.2x smaller than the
+Slab size is 14.2 bytes/row — 19MB for 1M rows, ~7.2x smaller than the
 equivalent JSON before compression, and far cheaper to parse.
 
 ## How it goes fast
@@ -223,25 +223,26 @@ downstream is shared.
 
 ## How it ships
 
-One global file would be a 9.4MB download to search a single route, so the
+One global file would be a 9.2MB download to search a single route, so the
 corpus is partitioned into **90 shards, one per origin airport**. The page
-fetches a manifest, then the shard covering the origin you pick — around
-100KB over the wire. Changing origin fetches a different file; a multi-city
+fetches a manifest, then the shard covering the origin you pick — 154KB on
+average, 172KB over the wire for a typical first visit. Changing origin fetches a different file; a multi-city
 trip fetches the shard each leg departs from and `concatSlabs` joins them, so
 the kernels never learn the corpus was split.
 
 Rows inside a shard are sorted by destination then departure before encoding.
 Random order is the worst case for a compressor, and sorting takes the corpus
-from 9.4MB to **5.9MB** compressed at no runtime cost.
+from 9.2MB to **5.7MB** compressed at no runtime cost.
 
 Measured on the deployed site:
 
 | Request | Raw | Transferred |
 | --- | ---: | ---: |
-| Manifest | 8.8KB | 3KB |
-| Smallest shard (ABE) | 9.6KB | 5KB |
-| Busiest shard (MCO, 60,612 offers) | 1,215KB | 545KB |
-| One global file instead | 19.3MB | 9.4MB |
+| Manifest | 11.9KB | 4.1KB |
+| Smallest shard (SFB) | 6.9KB | 3.7KB |
+| Typical first visit (SEA, 26,386 offers) | 363KB | 172KB |
+| Busiest shard (MCO, 60,612 offers) | 831KB | 384KB |
+| One global file instead | 19.1MB | 9.2MB |
 
 The page opens on the airport nearest the visitor, guessed from the time zone
 `Intl` already reports. That costs no request, no permission prompt and
@@ -323,8 +324,14 @@ discovered at runtime.
    (`demo/landing.template.html`)
 10. ~~Ship the corpus as per-origin shards instead of generating it in the
     page~~ — done (see [How it ships](#how-it-ships))
-11. Range requests: fetch only the columns a filter needs
-12. International fares, once a provider's display terms allow it
+11. ~~Range requests: fetch only the columns a filter needs~~ — investigated
+    and dropped. Every column appears in the row the list paints, so every
+    query reads all of them and there is nothing to leave unfetched. The two
+    columns that were not worth their bytes are now omitted from the file
+    entirely instead.
+12. ~~Open on the airport nearest the visitor~~ — done, guessed from the
+    time zone (see [How it ships](#how-it-ships))
+13. International fares, once a provider's display terms allow it
 
 ## Design notes
 

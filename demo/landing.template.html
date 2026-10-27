@@ -266,7 +266,7 @@ figcaption {
 
   <div class="figures">
     <div class="fig"><b>8.63ms</b><span>Full frame, one million rows</span></div>
-    <div class="fig"><b>20.0</b><span>Bytes per offer on disk</span></div>
+    <div class="fig"><b>14.2</b><span>Bytes per offer on disk</span></div>
     <div class="fig"><b>0</b><span>Requests while searching</span></div>
     <div class="fig"><b>1,200</b><span>Real markets, real fares</span></div>
   </div>
@@ -299,7 +299,7 @@ figcaption {
 </section>
 
 <section>
-  <div class="eyebrow"><span class="measure">20.0 bytes/row</span><span class="rule"></span></div>
+  <div class="eyebrow"><span class="measure">14.2 bytes/row</span><span class="rule"></span></div>
   <h2>A format you can read without parsing</h2>
   <p>
     Offers are stored in a slab: one binary buffer, each field its own typed array laid
@@ -345,7 +345,7 @@ figcaption {
 
       <line x1="8" y1="28" x2="872" y2="28" stroke="currentColor" stroke-width="1" opacity="0.35"></line>
       <text x="8" y="20" font-size="11" font-family="monospace" fill="currentColor" opacity="0.7">one ArrayBuffer</text>
-      <text x="872" y="20" font-size="11" font-family="monospace" text-anchor="end" fill="currentColor" opacity="0.7">19.08MB at 1M rows</text>
+      <text x="872" y="20" font-size="11" font-family="monospace" text-anchor="end" fill="currentColor" opacity="0.7">14.2 bytes a row</text>
 
       <line x1="419" y1="104" x2="419" y2="134" stroke="#C0551F" stroke-width="2" marker-end="url(#tick)"></line>
       <text x="419" y="154" text-anchor="middle" font-size="12.5" font-family="monospace" fill="#C0551F">a price filter reads 4MB</text>
@@ -353,8 +353,10 @@ figcaption {
     </svg>
     <figcaption>
       Columns sit contiguously, so a filter streams exactly the field it tests. The same
-      million offers as row-oriented JSON would be about 7.2 times larger and would have
-      to be parsed into objects before the first comparison.
+      million offers as row-oriented JSON would be many times larger and would have to be
+      parsed into objects before the first comparison. Two of the eight columns are not
+      stored at all: every row in a per-origin file departs the same airport, and arrival
+      is always departure plus duration, so both are rebuilt on arrival rather than sent.
     </figcaption>
   </figure>
 
@@ -368,13 +370,13 @@ figcaption {
   <div class="note">
     <b>The size surprise.</b> I assumed compression would shrink this a lot. Brotli at
     maximum quality gets <b>1.9&times;</b>, not the 3&times; I expected: packed binary columns are
-    high-entropy and there is little left to find. A million offers is 9.86MB on the wire.
+    high-entropy and there is little left to find. A million offers is 9.2MB on the wire.
     That number, not the raw size, is what decided how it ships.
   </div>
 </section>
 
 <section>
-  <div class="eyebrow"><span class="measure">9.4MB &rarr; 100KB</span><span class="rule"></span></div>
+  <div class="eyebrow"><span class="measure">9.2MB &rarr; 172KB</span><span class="rule"></span></div>
   <h2>How a million offers reach you</h2>
   <p>
     Two changes take the download from most of a feature film to something you would not
@@ -384,15 +386,16 @@ figcaption {
     <strong>Sort before encoding.</strong> Rows arrive in whatever order they were
     generated, which is the worst case for a compressor. Sorting by origin, destination
     and departure puts equal values next to each other and leaves small deltas behind
-    them. The corpus goes from 9.4MB compressed to <strong>5.9MB</strong> for the cost of
+    them. The corpus goes from 9.2MB compressed to <strong>5.7MB</strong> for the cost of
     a sort nobody waits for, since it happens at build time.
   </p>
   <p>
     <strong>Publish one file per origin.</strong> Nobody searches every airport at once.
     The corpus is partitioned into 90 shards, and a visitor fetches the one covering their
-    origin: 219KB raw, around 100KB over the wire. Picking a different origin fetches a
-    different file. A multi-city trip fetches the shard each leg departs from and
-    concatenates them, which the kernels never notice.
+    origin &mdash; 154KB on average, and the page opens on the airport nearest them rather
+    than a fixed one. Picking a different origin fetches a different file. A multi-city
+    trip fetches the shard each leg departs from and concatenates them, which the kernels
+    never notice.
   </p>
   <div class="table-wrap">
     <table>
@@ -401,10 +404,11 @@ figcaption {
         <tr><th>Request</th><th class="num">Raw</th><th class="num">Transferred</th></tr>
       </thead>
       <tbody>
-        <tr><th>Manifest (airports, airlines, shard index)</th><td class="num">8.8KB</td><td class="num">3KB</td></tr>
-        <tr><th>Smallest shard &mdash; Allentown</th><td class="num">9.6KB</td><td class="num">5KB</td></tr>
-        <tr class="hi"><th>Busiest shard &mdash; Orlando, 60,612 offers</th><td class="num">1,215KB</td><td class="num">545KB</td></tr>
-        <tr><th>One global file instead</th><td class="num">19.3MB</td><td class="num">9.4MB</td></tr>
+        <tr><th>Manifest (airports, airlines, shard index)</th><td class="num">11.9KB</td><td class="num">4.1KB</td></tr>
+        <tr><th>Smallest shard &mdash; Orlando Sanford</th><td class="num">6.9KB</td><td class="num">3.7KB</td></tr>
+        <tr class="hi"><th>A typical first visit &mdash; Seattle, 26,386 offers</th><td class="num">363KB</td><td class="num">172KB</td></tr>
+        <tr><th>Busiest shard &mdash; Orlando, 60,612 offers</th><td class="num">831KB</td><td class="num">384KB</td></tr>
+        <tr><th>One global file instead</th><td class="num">19.1MB</td><td class="num">9.2MB</td></tr>
       </tbody>
     </table>
   </div>
@@ -648,8 +652,8 @@ figcaption {
     fails the build if the two drift.
   </p>
   <p>
-    It fetches the shard for your origin, then filters and sorts and charts those offers
-    locally, builds multi-city itineraries, and encodes every view into a shareable link.
+    It fetches the shard for the airport nearest you, then filters and sorts and charts
+    those offers locally, builds multi-city itineraries, and encodes every view into a shareable link.
     After the file lands, it makes no network requests at all.
   </p>
 
